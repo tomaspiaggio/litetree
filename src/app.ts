@@ -199,8 +199,28 @@ async function bootstrap(
   const termCols = () => sidebarHidden ? cols() : cols() - SIDEBAR_WIDTH - 1
   const termRows = () => rows() - 2
 
+  // A worktree is "awake" when it has a running PTY; "asleep" otherwise.
+  const isAwake = (w: WorktreeEntry) => !!ptySvc.get(w.id)
+
+  // Stable sort: awake worktrees first, asleep last, preserving relative order
+  // within each group so the list doesn't shuffle arbitrarily.
+  const sortByAwake = (list: WorktreeEntry[]): WorktreeEntry[] =>
+    list
+      .map((w, i) => ({ w, i }))
+      .sort((a, b) => (isAwake(b.w) ? 1 : 0) - (isAwake(a.w) ? 1 : 0) || a.i - b.i)
+      .map(x => x.w)
+
   const applyView = () => {
-    worktrees = viewMode === "active" ? activeWorktrees : archivedWorktrees
+    // Keep the highlighted worktree highlighted across a re-sort.
+    const prevSelectedId = worktrees[selectedIndex]?.id
+    if (viewMode === "active") {
+      activeWorktrees = sortByAwake(activeWorktrees)
+      worktrees = activeWorktrees
+    } else {
+      worktrees = archivedWorktrees
+    }
+    const idx = prevSelectedId ? worktrees.findIndex(w => w.id === prevSelectedId) : -1
+    if (idx >= 0) selectedIndex = idx
     selectedIndex = Math.min(selectedIndex, Math.max(0, worktrees.length - 1))
   }
 
@@ -615,6 +635,7 @@ async function bootstrap(
           activeWorktreeId = null
           if (sidebarHidden) toggleSidebar()
         }
+        applyView() // re-sort: the now-asleep worktree drops to the bottom
         showToast(`Slept ${wt.displayName}`)
         markDirty()
       },
