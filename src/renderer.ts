@@ -615,9 +615,15 @@ function paintModal(modal: ModalState, editors: EditorOption[], screenCols: numb
 
   out += moveTo(mt + 2, ml) + MODAL_BORDER_FG + "│" + SGR_RESET + MODAL_BG + " ".repeat(mw - 2) + SGR_RESET + MODAL_BORDER_FG + "│" + SGR_RESET
 
+  // Visible length ignoring SGR escape sequences, so we can pad each line's
+  // background to the full modal width (otherwise the unfilled gap shows the
+  // terminal content underneath and the modal looks transparent/unreadable).
+  const visibleLen = (s: string): number => s.replace(/\x1b\[[0-9;]*m/g, "").length
   for (let i = 0; i < lines.length; i++) {
     const lr = mt + 3 + i
-    out += moveTo(lr, ml) + MODAL_BORDER_FG + "│" + SGR_RESET + MODAL_BG + "  " + lines[i]!
+    const content = lines[i]!
+    const pad = Math.max(0, mw - 4 - visibleLen(content))
+    out += moveTo(lr, ml) + MODAL_BORDER_FG + "│" + SGR_RESET + MODAL_BG + "  " + content + MODAL_BG + " ".repeat(pad)
     out += SGR_RESET + moveTo(lr, ml + mw - 1) + MODAL_BORDER_FG + "│" + SGR_RESET
   }
 
