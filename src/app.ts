@@ -10,7 +10,12 @@ import { DatabaseService } from "./services/DatabaseService.js"
 import { McpService } from "./services/McpService.js"
 import type { McpEvent, WorktreeContext, AgentStatus } from "./mcp/tools.js"
 import type { ReportedPr } from "./renderer.js"
-import { ensureClaudeMcpRegistered, buildAppendSystemPrompt } from "./mcp/install.js"
+import {
+  ensureClaudeMcpRegistered,
+  ensureCodexConfigured,
+  ensureOpencodeConfigured,
+  buildAppendSystemPrompt,
+} from "./mcp/install.js"
 import { generateBranchName } from "./utils/names.js"
 import { detectEditors, openEditor, type EditorOption } from "./utils/editors.js"
 import { sampleMemory } from "./utils/memory.js"
@@ -426,6 +431,18 @@ async function bootstrap(
 
   const activeHandle = () => activeWorktreeId ? ptySvc.get(activeWorktreeId) ?? null : null
 
+  // Install each client's MCP config lazily, the first time we launch that
+  // client this run — so a Claude-only user never gets codex/opencode files
+  // written, and vice versa. Idempotent + cheap; runs before the spawn.
+  const ensuredClients = new Set<string>()
+  const ensureClientConfigured = (cmd: Project["defaultCommand"]) => {
+    if (ensuredClients.has(cmd)) return
+    ensuredClients.add(cmd)
+    if (cmd === "claude") ensureClaudeMcpRegistered()
+    else if (cmd === "codex") ensureCodexConfigured()
+    else if (cmd === "opencode") ensureOpencodeConfigured()
+  }
+
   const sessionStartedKey = (worktreeId: string) => `session_started_${worktreeId}`
 
   const resolveCmd = (p: Project, worktreeId: string): [string, string[]] => {
@@ -441,7 +458,17 @@ async function bootstrap(
         args.push("--append-system-prompt", buildAppendSystemPrompt())
         return ["claude", args]
       }
-      case "codex": return ["codex", ["--full-auto"]]
+      case "codex": {
+        // Point codex at this instance's MCP server and map the per-worktree
+        // token (TREEMUX_TOKEN env) to the X-Treemux-Token header, all via
+        // per-launch -c overrides so nothing is written to ~/.codex/config.toml
+        // (keeps concurrent instances on different ports from colliding).
+        return ["codex", [
+          "--full-auto",
+          "-c", `mcp_servers.treemux.url="${mcpSvc.url}"`,
+          "-c", `mcp_servers.treemux.env_http_headers={ "X-Treemux-Token" = "TREEMUX_TOKEN" }`,
+        ]]
+      }
       case "opencode": return ["opencode", []]
       case "custom":
         if (p.customCommand) {
@@ -459,6 +486,9 @@ async function bootstrap(
     if (!wt) return
     const project = projects.find(p => p.id === wt.projectId)
     if (!project) return
+
+    // Make sure this client's MCP config is in place before we launch it.
+    ensureClientConfigured(project.defaultCommand)
 
     const existingLock = getLock(worktreeId)
     if (existingLock && existingLock.pid !== process.pid && existingLock.pty_pid > 0) {
@@ -1524,11 +1554,10 @@ async function bootstrap(
   hydrateMcpState()
   availableEditors = detectEditors()
 
-  // Wire the MCP server into app state and register treemux at Claude user
-  // scope (idempotent; runs before any worktree spawns).
+  // Wire the MCP server into app state. Per-client config is installed lazily
+  // on first spawn of each client (see ensureClientConfigured).
   mcpSvc.onEvent(handleMcpEvent)
   mcpSvc.setContextProvider(provideContext)
-  ensureClaudeMcpRegistered()
 
   // Mouse reporting is enabled lazily based on focus — see syncMouseMode.
   // We never want it on while the user is interacting with the embedded
