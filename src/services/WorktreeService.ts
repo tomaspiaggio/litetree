@@ -50,6 +50,13 @@ export class WorktreeService extends Context.Tag("WorktreeService")<
       WorktreeEntry,
       WorktreeDeleteError | ConfigReadError | ConfigWriteError
     >
+    readonly renameBranch: (
+      worktreeId: string,
+      branchName: string
+    ) => Effect.Effect<
+      WorktreeEntry,
+      WorktreeDeleteError | ConfigReadError | ConfigWriteError
+    >
     readonly restore: (
       worktreeId: string
     ) => Effect.Effect<
@@ -207,6 +214,33 @@ export const WorktreeServiceLive = Layer.effect(
           const updated = new WorktreeEntry({
             ...wt,
             displayName,
+            updatedAt: new Date().toISOString(),
+          })
+          yield* config.update((c) => ({
+            ...c,
+            worktrees: c.worktrees.map((w) => (w.id === worktreeId ? updated : w)),
+          }) as typeof c)
+          return updated
+        }),
+
+      // Agent renamed the git branch. Update branchName (and displayName if it
+      // still mirrored the old branch) but DO NOT touch path — the on-disk
+      // worktree directory is derived from the original branch and does not
+      // move when the branch is renamed.
+      renameBranch: (worktreeId, branchName) =>
+        Effect.gen(function* () {
+          const cfg = yield* config.load
+          const wt = cfg.worktrees.find((w) => w.id === worktreeId)
+          if (!wt) {
+            return yield* new WorktreeDeleteError({
+              message: `Worktree not found: ${worktreeId}`,
+              worktreeId,
+            })
+          }
+          const updated = new WorktreeEntry({
+            ...wt,
+            branchName,
+            displayName: wt.displayName === wt.branchName ? branchName : wt.displayName,
             updatedAt: new Date().toISOString(),
           })
           yield* config.update((c) => ({

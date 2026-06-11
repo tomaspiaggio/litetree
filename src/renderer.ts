@@ -1,6 +1,13 @@
 import type { PtyHandle } from "./services/PtyService.js"
 import type { WorktreeEntry, Project } from "./models/Config.js"
 import type { EditorOption } from "./utils/editors.js"
+import type { AgentStatus } from "./mcp/tools.js"
+
+// PR info reported by the agent (authoritative); see McpService.
+export interface ReportedPr {
+  number: number
+  state?: string
+}
 
 const ESC = "\x1b"
 const CSI = `${ESC}[`
@@ -42,6 +49,11 @@ const BAR_FG = `${CSI}38;5;252m`
 const ACCENT = `${CSI}38;5;81m`
 const MODAL_BG = `${CSI}48;5;237m`
 const MODAL_BORDER_FG = `${CSI}38;5;213m`
+// Agent-reported state markers (see McpService): attention = bright amber,
+// done = green, error = red.
+const ATTENTION_FG = `${CSI}38;5;220m`
+const STATUS_DONE_FG = `${CSI}38;5;113m`
+const STATUS_ERROR_FG = `${CSI}38;5;203m`
 
 export const SIDEBAR_WIDTH = 30
 
@@ -73,6 +85,9 @@ export interface FrameOpts {
   scrollOffset: number
   inlineEdit: InlineEdit | null
   prNumbers: ReadonlyMap<string, number | null>
+  reportedPr: ReadonlyMap<string, ReportedPr>
+  attention: ReadonlyMap<string, { summary: string; at: number }>
+  agentStatus: ReadonlyMap<string, AgentStatus>
   setupRunning: ReadonlySet<string>
   toast: string | null
   sidebarHidden: boolean
@@ -94,7 +109,7 @@ const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
 const spinner = (): string => SPINNER_FRAMES[Math.floor(Date.now() / 80) % SPINNER_FRAMES.length]!
 
 export function paintFrame(opts: FrameOpts): string {
-  const { worktrees, projects, selectedIndex, activeWorktreeId, focus, modal, handle, availableEditors, cols, rows, scrollOffset, inlineEdit, prNumbers, setupRunning, toast, sidebarHidden, viewMode, archivedCount, memoryByWorktree, memoryTotal } = opts
+  const { worktrees, projects, selectedIndex, activeWorktreeId, focus, modal, handle, availableEditors, cols, rows, scrollOffset, inlineEdit, prNumbers, reportedPr, attention, agentStatus, setupRunning, toast, sidebarHidden, viewMode, archivedCount, memoryByWorktree, memoryTotal } = opts
   const contentHeight = rows - 2
   const termStartCol = sidebarHidden ? 1 : SIDEBAR_WIDTH + 2
   const termCols = sidebarHidden ? cols : cols - SIDEBAR_WIDTH - 1
@@ -102,7 +117,7 @@ export function paintFrame(opts: FrameOpts): string {
   let out = HIDE_CURSOR
 
   if (!sidebarHidden) {
-    out += paintSidebar(worktrees, projects, selectedIndex, activeWorktreeId, contentHeight, focus === "sidebar", inlineEdit, prNumbers, setupRunning, viewMode, archivedCount, memoryByWorktree)
+    out += paintSidebar(worktrees, projects, selectedIndex, activeWorktreeId, contentHeight, focus === "sidebar", inlineEdit, prNumbers, reportedPr, attention, agentStatus, setupRunning, viewMode, archivedCount, memoryByWorktree)
     for (let r = 1; r <= contentHeight; r++) {
       out += moveTo(r, SIDEBAR_WIDTH + 1) + BORDER_FG + "│" + SGR_RESET
     }
@@ -160,6 +175,9 @@ function paintSidebar(
   focused: boolean,
   inlineEdit: InlineEdit | null,
   prNumbers: ReadonlyMap<string, number | null>,
+  reportedPr: ReadonlyMap<string, ReportedPr>,
+  attention: ReadonlyMap<string, { summary: string; at: number }>,
+  agentStatus: ReadonlyMap<string, AgentStatus>,
   setupRunning: ReadonlySet<string>,
   viewMode: "active" | "archived",
   archivedCount: number,
@@ -197,14 +215,29 @@ function paintSidebar(
       const wt = worktrees[i]!
       const isSelected = i === selectedIndex
       const isActive = wt.id === activeId
-      const isMerged = wt.status === "merged"
+      const pr = reportedPr.get(wt.id)
+      const isMerged = wt.status === "merged" || pr?.state === "merged"
       const isSetupRunning = setupRunning.has(wt.id)
+      const needsAttention = attention.has(wt.id)
+      const status = agentStatus.get(wt.id)
       const editing = inlineEdit?.worktreeId === wt.id
 
       const numLabel = i < 9 ? `${i + 1}` : " "
-      const marker = isSetupRunning ? spinChar : isActive ? "●" : isMerged ? "✓" : " "
+      // Marker precedence: setup spinner > needs-attention > active > merged >
+      // agent status > idle. Agent-reported PR wins over the gh-poll fallback.
+      let marker: string
+      let markerColor: string
+      if (isSetupRunning) { marker = spinChar; markerColor = SIDEBAR_FG }
+      else if (needsAttention) { marker = "●"; markerColor = ATTENTION_FG }
+      else if (isActive) { marker = "●"; markerColor = ACTIVE_FG }
+      else if (isMerged) { marker = "✓"; markerColor = DIM_FG }
+      else if (status === "done") { marker = "✓"; markerColor = STATUS_DONE_FG }
+      else if (status === "error") { marker = "✗"; markerColor = STATUS_ERROR_FG }
+      else if (status === "waiting") { marker = "●"; markerColor = ACCENT }
+      else if (status === "working") { marker = "●"; markerColor = DIM_FG }
+      else { marker = " "; markerColor = SIDEBAR_FG }
       const project = projects.find(p => p.id === wt.projectId)
-      const prNum = prNumbers.get(wt.id)
+      const prNum = pr?.number ?? prNumbers.get(wt.id)
       const prSuffix = prNum ? ` #${prNum}` : ""
 
       if (isPrimary) {
@@ -226,7 +259,9 @@ function paintSidebar(
           out += moveTo(r, 1) + SIDEBAR_BG + DIM_FG + SGR_DIM + prefix + name + prSuffix + " ".repeat(pad) + SGR_RESET
         } else {
           out += moveTo(r, 1) + SIDEBAR_BG + DIM_FG + ` ${numLabel} ` + SGR_RESET
-          out += SIDEBAR_BG + (isActive ? ACTIVE_FG : SIDEBAR_FG) + `${marker} ` + name + SGR_RESET
+          const nameColor = needsAttention ? ATTENTION_FG : isActive ? ACTIVE_FG : SIDEBAR_FG
+          out += SIDEBAR_BG + (needsAttention ? SGR_BOLD : "") + markerColor + marker + SGR_RESET
+          out += SIDEBAR_BG + nameColor + ` ` + name + SGR_RESET
           if (prSuffix) out += SIDEBAR_BG + ACCENT + prSuffix + SGR_RESET
           out += SIDEBAR_BG + " ".repeat(pad) + SGR_RESET
         }
