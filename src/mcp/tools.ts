@@ -10,7 +10,7 @@ export type NotifyLevel = "info" | "warn" | "error"
 // into one of these and handed to the handler app.ts registers via onEvent.
 export type McpEvent =
   | { kind: "report_pr"; worktreeId: string; number: number; url?: string; state?: PrState }
-  | { kind: "report_branch"; worktreeId: string; name: string }
+  | { kind: "report_branch"; worktreeId: string; name: string; displayName?: string }
   | { kind: "needs_attention"; worktreeId: string; summary: string }
   | { kind: "notify"; worktreeId: string; message: string; level: NotifyLevel }
   | { kind: "set_status"; worktreeId: string; status: AgentStatus }
@@ -106,11 +106,17 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     {
       title: "Report branch rename",
       description:
-        "Report that you renamed this worktree's git branch. treemux updates its label to match. The on-disk worktree directory does not move.",
-      inputSchema: { name: z.string().min(1) },
+        "Report that you renamed this worktree's git branch. The on-disk worktree directory does not move. " +
+        "Pass `displayName` to set a short sidebar label decoupled from the (often long, prefixed) branch name — " +
+        "the sidebar is narrow, so keep it to ~18 characters; a PR number suffix eats into that. " +
+        "If you omit `displayName`, the label falls back to the branch name (truncated to fit).",
+      inputSchema: {
+        name: z.string().min(1),
+        displayName: z.string().min(1).optional(),
+      },
     },
-    async ({ name }) => {
-      emit({ kind: "report_branch", worktreeId, name })
+    async ({ name, displayName }) => {
+      emit({ kind: "report_branch", worktreeId, name, displayName })
       return ok()
     },
   )
