@@ -13,15 +13,17 @@
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null || true"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
     "effect": "^3.14.0",
     "ink": "^5.1.0",
-    "ink-text-input": "^6.0.0",
     "ink-select-input": "^6.0.0",
-    "react": "^18.3.1",
+    "ink-text-input": "^6.0.0",
+    "nanoid": "^5.1.5",
     "node-pty": "^1.1.0",
-    "@xterm/headless": "^6.0.0",
-    "@xterm/addon-serialize": "^0.14.0",
-    "nanoid": "^5.1.5"
+    "react": "^18.3.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "typescript": "^5.8.3",

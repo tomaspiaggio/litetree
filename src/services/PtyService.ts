@@ -50,6 +50,7 @@ export class PtyService extends Context.Tag("PtyService")<
       cols: number
       rows: number
       cwd: string
+      env?: Record<string, string>
       onExit?: () => void
       onData?: () => void
     }) => Effect.Effect<PtyHandle, PtySpawnError>
@@ -109,6 +110,7 @@ export const PtyServiceLive = Layer.effect(
             TERM: "xterm-256color",
             COLORTERM: "truecolor",
             LANG: "en_US.UTF-8",
+            ...(params.env ?? {}),
           }
           const parsedEnv = Object.entries(env)
             .filter(([, v]) => v !== undefined)

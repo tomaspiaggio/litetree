@@ -7,6 +7,15 @@ import { WorktreeService } from "./services/WorktreeService.js"
 import { PtyService } from "./services/PtyService.js"
 import { SetupService } from "./services/SetupService.js"
 import { DatabaseService } from "./services/DatabaseService.js"
+import { McpService } from "./services/McpService.js"
+import type { McpEvent, WorktreeContext, AgentStatus } from "./mcp/tools.js"
+import type { ReportedPr } from "./renderer.js"
+import {
+  ensureClaudeMcpRegistered,
+  ensureCodexConfigured,
+  ensureOpencodeConfigured,
+  buildAppendSystemPrompt,
+} from "./mcp/install.js"
 import { generateBranchName } from "./utils/names.js"
 import { detectEditors, openEditor, type EditorOption } from "./utils/editors.js"
 import { sampleMemory } from "./utils/memory.js"
@@ -31,9 +40,10 @@ export const startApp = Effect.gen(function* () {
   const ptySvc = yield* PtyService
   const setupSvc = yield* SetupService
   const dbSvc = yield* DatabaseService
+  const mcpSvc = yield* McpService
 
   yield* Effect.tryPromise({
-    try: () => bootstrap(projectSvc, worktreeSvc, ptySvc, setupSvc, dbSvc),
+    try: () => bootstrap(projectSvc, worktreeSvc, ptySvc, setupSvc, dbSvc, mcpSvc),
     catch: (e) => new Error(`Failed to start: ${e}`),
   })
 
@@ -46,6 +56,7 @@ type WtSvc = Svc<typeof WorktreeService>
 type PtySvc = Svc<typeof PtyService>
 type SetSvc = Svc<typeof SetupService>
 type DbSvc = Svc<typeof DatabaseService>
+type McpSvc = Svc<typeof McpService>
 
 async function bootstrap(
   projectSvc: ProjSvc,
@@ -53,6 +64,7 @@ async function bootstrap(
   ptySvc: PtySvc,
   setupSvc: SetSvc,
   dbSvc: DbSvc,
+  mcpSvc: McpSvc,
 ) {
   const SETTING_LAST_ACTIVE = "last_active_worktree_id"
 
@@ -157,6 +169,16 @@ async function bootstrap(
   const PR_CACHE_FOUND_MS = 5 * 60 * 1000
   const PR_CACHE_NULL_MS = 30 * 1000
   let ghAvailable: boolean | null = null
+  // MCP-driven per-worktree state (agent reports these via the treemux MCP
+  // server). All persisted in app_settings so they survive a restart.
+  const reportedPr = new Map<string, ReportedPr>()      // authoritative PR, wins over gh poll
+  const attention = new Map<string, { summary: string; at: number }>() // unread / needs-you
+  const notifications = new Map<string, { message: string; level: string; at: number }>()
+  const agentStatus = new Map<string, AgentStatus>()
+  const mcpPrKey = (id: string) => `mcp_pr_${id}`
+  const mcpAttentionKey = (id: string) => `mcp_attention_${id}`
+  const mcpNotifyKey = (id: string) => `mcp_notify_${id}`
+  const mcpStatusKey = (id: string) => `mcp_status_${id}`
   // Setup script status per worktree. "running" while scripts execute,
   // dropped from the map when finished.
   const setupRunning = new Set<string>()
@@ -283,11 +305,143 @@ async function bootstrap(
 
   const fetchAllPRs = () => {
     for (const wt of worktrees) {
-      if (wt.status === "active") void fetchPR(wt)
+      // The agent's reported PR is authoritative; don't let the gh poll
+      // override it.
+      if (wt.status === "active" && !reportedPr.has(wt.id)) void fetchPR(wt)
+    }
+  }
+
+  // --- MCP bridge (agent <-> treemux) ---
+
+  const findWorktree = (id: string): WorktreeEntry | undefined =>
+    activeWorktrees.find(w => w.id === id) ?? archivedWorktrees.find(w => w.id === id)
+
+  const desktopNotify = (title: string, message: string) => {
+    if (process.platform !== "darwin") return
+    const esc = (s: string) => s.replace(/["\\]/g, "\\$&")
+    try {
+      Bun.spawn(
+        ["osascript", "-e", `display notification "${esc(message)}" with title "${esc(title)}"`],
+        { stdout: "ignore", stderr: "ignore" },
+      )
+    } catch { /* ignore */ }
+  }
+
+  const bellAndNotify = (wtId: string, summary: string) => {
+    // Terminal bell flags the host tab. Desktop notification only if the user
+    // isn't already looking at this worktree's terminal.
+    process.stdout.write("\x07")
+    const lookingAtIt = activeWorktreeId === wtId && focus === "terminal"
+    if (!lookingAtIt) {
+      const wt = findWorktree(wtId)
+      desktopNotify(`treemux: ${wt?.displayName ?? "worktree"}`, summary)
+    }
+  }
+
+  const handleMcpEvent = (e: McpEvent) => {
+    switch (e.kind) {
+      case "report_pr": {
+        reportedPr.set(e.worktreeId, { number: e.number, state: e.state })
+        setSetting(mcpPrKey(e.worktreeId), JSON.stringify({ number: e.number, url: e.url, state: e.state }))
+        markDirty()
+        break
+      }
+      case "report_branch": {
+        void Effect.runPromise(
+          worktreeSvc.renameBranch(e.worktreeId, e.name).pipe(Effect.catchAll(() => Effect.void)),
+        ).then(() => refresh()).then(markDirty)
+        break
+      }
+      case "needs_attention": {
+        const rec = { summary: e.summary, at: Date.now() }
+        attention.set(e.worktreeId, rec)
+        setSetting(mcpAttentionKey(e.worktreeId), JSON.stringify(rec))
+        bellAndNotify(e.worktreeId, e.summary)
+        markDirty()
+        break
+      }
+      case "notify": {
+        const rec = { message: e.message, level: e.level, at: Date.now() }
+        notifications.set(e.worktreeId, rec)
+        setSetting(mcpNotifyKey(e.worktreeId), JSON.stringify(rec))
+        // A notification also marks the worktree unread so it gets noticed.
+        const att = { summary: e.message, at: rec.at }
+        attention.set(e.worktreeId, att)
+        setSetting(mcpAttentionKey(e.worktreeId), JSON.stringify(att))
+        bellAndNotify(e.worktreeId, e.message)
+        markDirty()
+        break
+      }
+      case "set_status": {
+        agentStatus.set(e.worktreeId, e.status)
+        setSetting(mcpStatusKey(e.worktreeId), e.status)
+        markDirty()
+        break
+      }
+    }
+  }
+
+  const provideContext = (worktreeId: string): WorktreeContext | null => {
+    const wt = findWorktree(worktreeId)
+    if (!wt) return null
+    const project = projects.find(p => p.id === wt.projectId)
+    const prNum = reportedPr.get(worktreeId)?.number ?? prNumbers.get(worktreeId) ?? null
+    return {
+      worktreeId,
+      branchName: wt.branchName,
+      worktreePath: wt.path,
+      projectName: project?.name ?? "",
+      prNumber: prNum,
+      hasPR: prNum !== null,
+      baseBranch: "origin/main",
+      defaultCommand: project?.defaultCommand ?? "claude",
+    }
+  }
+
+  // Restore persisted MCP state for all known worktrees on boot.
+  const hydrateMcpState = () => {
+    for (const wt of [...activeWorktrees, ...archivedWorktrees]) {
+      const prRaw = getSetting(mcpPrKey(wt.id))
+      if (prRaw) {
+        try {
+          const p = JSON.parse(prRaw) as { number?: number; state?: string }
+          if (p?.number) reportedPr.set(wt.id, { number: p.number, state: p.state })
+        } catch { /* ignore */ }
+      }
+      const atRaw = getSetting(mcpAttentionKey(wt.id))
+      if (atRaw) {
+        try {
+          const a = JSON.parse(atRaw) as { summary?: string; at?: number }
+          if (a?.summary) attention.set(wt.id, { summary: a.summary, at: a.at ?? 0 })
+        } catch { /* ignore */ }
+      }
+      const nRaw = getSetting(mcpNotifyKey(wt.id))
+      if (nRaw) {
+        try {
+          const n = JSON.parse(nRaw) as { message?: string; level?: string; at?: number }
+          if (n?.message) notifications.set(wt.id, { message: n.message, level: n.level ?? "info", at: n.at ?? 0 })
+        } catch { /* ignore */ }
+      }
+      const st = getSetting(mcpStatusKey(wt.id))
+      if (st === "working" || st === "waiting" || st === "done" || st === "error") {
+        agentStatus.set(wt.id, st)
+      }
     }
   }
 
   const activeHandle = () => activeWorktreeId ? ptySvc.get(activeWorktreeId) ?? null : null
+
+  // Install each client's MCP config lazily, the first time we launch that
+  // client this run — so a Claude-only user never gets codex/opencode files
+  // written, and vice versa. Idempotent + cheap; runs before the spawn.
+  const ensuredClients = new Set<string>()
+  const ensureClientConfigured = (cmd: Project["defaultCommand"]) => {
+    if (ensuredClients.has(cmd)) return
+    ensuredClients.add(cmd)
+    if (cmd === "claude") ensureClaudeMcpRegistered()
+    else if (cmd === "codex") ensureCodexConfigured()
+    else if (cmd === "opencode") ensureOpencodeConfigured()
+  }
 
   const sessionStartedKey = (worktreeId: string) => `session_started_${worktreeId}`
 
@@ -299,9 +453,22 @@ async function bootstrap(
         // directory. Skip on first spawn (no session exists yet).
         const args = ["--dangerously-skip-permissions"]
         if (resumed) args.push("--continue")
+        // Tell Claude about the treemux MCP tools and when to use them.
+        // --append-system-prompt applies per-invocation, so pass it every time.
+        args.push("--append-system-prompt", buildAppendSystemPrompt())
         return ["claude", args]
       }
-      case "codex": return ["codex", ["--full-auto"]]
+      case "codex": {
+        // Point codex at this instance's MCP server and map the per-worktree
+        // token (TREEMUX_TOKEN env) to the X-Treemux-Token header, all via
+        // per-launch -c overrides so nothing is written to ~/.codex/config.toml
+        // (keeps concurrent instances on different ports from colliding).
+        return ["codex", [
+          "--full-auto",
+          "-c", `mcp_servers.treemux.url="${mcpSvc.url}"`,
+          "-c", `mcp_servers.treemux.env_http_headers={ "X-Treemux-Token" = "TREEMUX_TOKEN" }`,
+        ]]
+      }
       case "opencode": return ["opencode", []]
       case "custom":
         if (p.customCommand) {
@@ -320,6 +487,9 @@ async function bootstrap(
     const project = projects.find(p => p.id === wt.projectId)
     if (!project) return
 
+    // Make sure this client's MCP config is in place before we launch it.
+    ensureClientConfigured(project.defaultCommand)
+
     const existingLock = getLock(worktreeId)
     if (existingLock && existingLock.pid !== process.pid && existingLock.pty_pid > 0) {
       if (isProcessAlive(existingLock.pty_pid)) {
@@ -328,6 +498,15 @@ async function bootstrap(
     }
 
     const [cmd, args] = resolveCmd(project, worktreeId)
+    // Per-worktree MCP identity: the token + this instance's server URL are
+    // injected into the child env. Claude's user-scoped MCP registration
+    // interpolates ${TREEMUX_TOKEN}/${TREEMUX_MCP_URL} from these, so each
+    // worktree connects back to this instance and is identified by its token.
+    const mcpEnv: Record<string, string> = {
+      TREEMUX_MCP_URL: mcpSvc.url,
+      TREEMUX_TOKEN: mcpSvc.tokenFor(worktreeId),
+      TREEMUX_WORKTREE_ID: worktreeId,
+    }
     const handle = await Effect.runPromise(
       ptySvc.spawn({
         worktreeId,
@@ -336,6 +515,7 @@ async function bootstrap(
         cols: termCols(),
         rows: termRows(),
         cwd: wt.path,
+        env: mcpEnv,
         onExit: () => {
           releaseLock(worktreeId)
           if (activeWorktreeId === worktreeId && focus === "terminal") {
@@ -414,6 +594,9 @@ async function bootstrap(
       scrollOffset: currentScrollOffset(),
       inlineEdit,
       prNumbers,
+      reportedPr,
+      attention,
+      agentStatus,
       setupRunning,
       toast: toastMessage && Date.now() < toastUntil ? toastMessage : null,
       sidebarHidden,
@@ -956,6 +1139,9 @@ async function bootstrap(
   const openWorktree = async (wtId: string) => {
     activeWorktreeId = wtId
     setSetting(SETTING_LAST_ACTIVE, wtId)
+    // Opening a worktree marks it read: clear any agent attention/notification.
+    if (attention.delete(wtId)) setSetting(mcpAttentionKey(wtId), "")
+    if (notifications.delete(wtId)) setSetting(mcpNotifyKey(wtId), "")
     if (!sidebarHidden) {
       sidebarHidden = true
     }
@@ -1365,7 +1551,13 @@ async function bootstrap(
   }
 
   await refresh()
+  hydrateMcpState()
   availableEditors = detectEditors()
+
+  // Wire the MCP server into app state. Per-client config is installed lazily
+  // on first spawn of each client (see ensureClientConfigured).
+  mcpSvc.onEvent(handleMcpEvent)
+  mcpSvc.setContextProvider(provideContext)
 
   // Mouse reporting is enabled lazily based on focus — see syncMouseMode.
   // We never want it on while the user is interacting with the embedded
