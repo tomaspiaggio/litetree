@@ -25,6 +25,9 @@ export interface WorktreeContext {
   hasPR: boolean
   baseBranch: string
   defaultCommand: string
+  // Free-form, project-specific PR conventions (set via `project add
+  // --pr-instructions`); folded into the create_pr prompt when present.
+  prInstructions?: string
 }
 
 export interface ToolDeps {
@@ -34,6 +37,41 @@ export interface ToolDeps {
 }
 
 const ok = () => ({ content: [{ type: "text" as const, text: "ok" }] })
+
+// The text injected as a user turn when the operator triggers the `create_pr`
+// prompt (the Ctrl+K hotkey, or `/mcp__treemux__create_pr` typed by hand).
+// Context-aware: targets the right base branch, updates an existing PR instead
+// of creating a duplicate, and folds in any project-specific conventions.
+function buildCreatePrPrompt(ctx: WorktreeContext | null): string {
+  const base = ctx?.baseBranch ?? "the default branch"
+  const lines: string[] = []
+
+  if (ctx?.hasPR && ctx.prNumber !== null) {
+    lines.push(
+      `Update the existing pull request (#${ctx.prNumber}) for this worktree's branch.`,
+      `Push any new commits, then refresh its title/description if the changes warrant it.`,
+    )
+  } else {
+    lines.push(
+      `Create a pull request for this worktree's branch, targeting \`${base}\`.`,
+      `Push the branch first if it isn't pushed yet, then open the PR with \`gh pr create\`.`,
+    )
+  }
+
+  lines.push(
+    "",
+    "Follow this repository's conventions:",
+    "- Match the title format and description structure of recent PRs — check `gh pr list --state merged --limit 10` and any CLAUDE.md / CONTRIBUTING guidance.",
+    "- Write a clear title and a description with a Summary and a Test plan.",
+  )
+
+  if (ctx?.prInstructions && ctx.prInstructions.trim().length > 0) {
+    lines.push("", "Project-specific conventions (these take precedence):", ctx.prInstructions.trim())
+  }
+
+  lines.push("", "After the PR is open, call the treemux `report_pr` tool with its number so the sidebar updates.")
+  return lines.join("\n")
+}
 
 // Registers every treemux tool on a fresh McpServer bound to one worktree.
 // In stateless mode we build a new server per request, so `deps.worktreeId`
@@ -136,5 +174,27 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       }
       return { content: [{ type: "text" as const, text: JSON.stringify(ctx, null, 2) }] }
     },
+  )
+
+  // Operator-invoked prompt: surfaces as `/mcp__treemux__create_pr` in the
+  // client and is what treemux's "create a PR" hotkey injects. The trigger is
+  // the operator (a keypress / typed command), not the server — MCP can't
+  // self-initiate a turn — but the prompt text lives here so it stays one
+  // place to evolve and can be tailored per project.
+  server.registerPrompt(
+    "create_pr",
+    {
+      title: "Create a PR following our conventions",
+      description:
+        "Open (or update) the pull request for this worktree's branch, following this repository's and project's conventions, then report it back to treemux.",
+    },
+    () => ({
+      messages: [
+        {
+          role: "user",
+          content: { type: "text", text: buildCreatePrPrompt(getContext(worktreeId)) },
+        },
+      ],
+    }),
   )
 }

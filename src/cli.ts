@@ -53,12 +53,13 @@ async function runProjectAdd(args: string[]): Promise<boolean> {
   const repo = flags["repo"]
 
   if (!name || !repo) {
-    console.log('Usage: treemux project add --name <name> --repo <path> [--command claude|codex|opencode|custom] [--custom-command "cmd"] [--setup "cmd1" --setup "cmd2"]')
+    console.log('Usage: treemux project add --name <name> --repo <path> [--command claude|codex|opencode|custom] [--custom-command "cmd"] [--pr-instructions "..."] [--setup "cmd1" --setup "cmd2"]')
     return true
   }
 
   const command = (flags["command"] ?? "claude") as CommandType
   const customCommand = flags["custom-command"]
+  const prInstructions = flags["pr-instructions"]
   const setupScripts: string[] = []
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--setup" && args[i + 1]) {
@@ -75,6 +76,7 @@ async function runProjectAdd(args: string[]): Promise<boolean> {
         setupScript: setupScripts,
         defaultCommand: command,
         customCommand,
+        prInstructions,
       })
       console.log(`Project added: ${project.name} (${project.id})`)
       console.log(`  Repo: ${project.repoPath}`)
@@ -103,6 +105,9 @@ async function runProjectList(): Promise<boolean> {
         console.log(`    Command: ${p.defaultCommand}`)
         if (p.setupScript.length > 0) {
           console.log(`    Setup: ${p.setupScript.join("; ")}`)
+        }
+        if (p.prInstructions) {
+          console.log(`    PR instructions: ${p.prInstructions}`)
         }
       }
     }).pipe(Effect.provide(FullLayer))

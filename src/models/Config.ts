@@ -13,6 +13,9 @@ export class Project extends Schema.Class<Project>("Project")({
   setupScript: Schema.optionalWith(Schema.Array(Schema.String), { default: () => [] }),
   defaultCommand: Schema.optionalWith(CommandType, { default: () => "claude" as const }),
   customCommand: Schema.optional(Schema.String),
+  // Project-specific PR conventions, surfaced to the agent via the treemux
+  // `create_pr` MCP prompt (the Ctrl+K "create a PR" hotkey). Free-form text.
+  prInstructions: Schema.optional(Schema.String),
 }) {}
 
 export class WorktreeEntry extends Schema.Class<WorktreeEntry>("WorktreeEntry")({

@@ -17,6 +17,7 @@ export class ProjectService extends Context.Tag("ProjectService")<
       setupScript?: string[]
       defaultCommand?: CommandType
       customCommand?: string
+      prInstructions?: string
     }) => Effect.Effect<Project, ConfigReadError | ConfigWriteError>
     readonly update: (
       projectId: string,
@@ -24,6 +25,7 @@ export class ProjectService extends Context.Tag("ProjectService")<
         setupScript?: readonly string[]
         defaultCommand?: CommandType
         customCommand?: string
+        prInstructions?: string
       }
     ) => Effect.Effect<Project, ConfigReadError | ConfigWriteError | ProjectNotFoundError>
     readonly remove: (
@@ -51,6 +53,7 @@ export const ProjectServiceLive = Layer.effect(
             setupScript: params.setupScript ?? [],
             defaultCommand: params.defaultCommand ?? "claude",
             customCommand: params.customCommand,
+            prInstructions: params.prInstructions,
           })
           yield* config.update((c) => ({
             ...c,
@@ -73,6 +76,7 @@ export const ProjectServiceLive = Layer.effect(
             setupScript: params.setupScript !== undefined ? [...params.setupScript] : [...current.setupScript],
             defaultCommand: params.defaultCommand ?? current.defaultCommand,
             customCommand: params.customCommand !== undefined ? params.customCommand : current.customCommand,
+            prInstructions: params.prInstructions !== undefined ? params.prInstructions : current.prInstructions,
           })
           yield* config.update((c) => ({
             ...c,

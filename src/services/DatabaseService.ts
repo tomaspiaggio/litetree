@@ -38,10 +38,19 @@ export const DatabaseServiceLive = Layer.scoped(
         setup_script TEXT NOT NULL DEFAULT '[]',
         default_command TEXT NOT NULL DEFAULT 'claude',
         custom_command TEXT,
+        pr_instructions TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `)
+
+    // Migration: add pr_instructions to projects created before it existed.
+    const hasPrCol = db
+      .query("SELECT COUNT(*) as n FROM pragma_table_info('projects') WHERE name = 'pr_instructions'")
+      .get() as { n: number } | null
+    if (hasPrCol && hasPrCol.n === 0) {
+      db.exec("ALTER TABLE projects ADD COLUMN pr_instructions TEXT")
+    }
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS worktrees (
