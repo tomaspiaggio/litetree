@@ -53,7 +53,8 @@ export class WorktreeService extends Context.Tag("WorktreeService")<
     >
     readonly renameBranch: (
       worktreeId: string,
-      branchName: string
+      branchName: string,
+      displayName?: string
     ) => Effect.Effect<
       WorktreeEntry,
       WorktreeDeleteError | ConfigReadError | ConfigWriteError
@@ -227,11 +228,13 @@ export const WorktreeServiceLive = Layer.effect(
           return updated
         }),
 
-      // Agent renamed the git branch. Update branchName (and displayName if it
-      // still mirrored the old branch) but DO NOT touch path — the on-disk
-      // worktree directory is derived from the original branch and does not
-      // move when the branch is renamed.
-      renameBranch: (worktreeId, branchName) =>
+      // Agent renamed the git branch. Update branchName and, separately, the
+      // sidebar label: prefer an explicit short displayName when the agent
+      // supplied one, otherwise fall back to mirroring the branch name (only if
+      // the label still tracked the old branch). DO NOT touch path — the
+      // on-disk worktree directory is derived from the original branch and does
+      // not move when the branch is renamed.
+      renameBranch: (worktreeId, branchName, displayName) =>
         Effect.gen(function* () {
           const cfg = yield* config.load
           const wt = cfg.worktrees.find((w) => w.id === worktreeId)
@@ -241,10 +244,13 @@ export const WorktreeServiceLive = Layer.effect(
               worktreeId,
             })
           }
+          const label = displayName?.trim()
           const updated = new WorktreeEntry({
             ...wt,
             branchName,
-            displayName: wt.displayName === wt.branchName ? branchName : wt.displayName,
+            displayName: label && label.length > 0
+              ? label
+              : wt.displayName === wt.branchName ? branchName : wt.displayName,
             // The branch now has a real name.
             branchNameGenerated: false,
             updatedAt: new Date().toISOString(),

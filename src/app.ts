@@ -357,7 +357,7 @@ async function bootstrap(
       }
       case "report_branch": {
         void Effect.runPromise(
-          worktreeSvc.renameBranch(e.worktreeId, e.name).pipe(Effect.catchAll(() => Effect.void)),
+          worktreeSvc.renameBranch(e.worktreeId, e.name, e.displayName).pipe(Effect.catchAll(() => Effect.void)),
         ).then(() => refresh()).then(markDirty)
         break
       }
