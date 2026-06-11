@@ -62,10 +62,19 @@ export const DatabaseServiceLive = Layer.scoped(
         description TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'active',
         sort_order INTEGER,
+        branch_name_generated INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `)
+
+    // Migration: add branch_name_generated to worktrees tables that predate it.
+    const hasBranchGenCol = db
+      .query("SELECT COUNT(*) as n FROM pragma_table_info('worktrees') WHERE name = 'branch_name_generated'")
+      .get() as { n: number } | null
+    if (hasBranchGenCol && hasBranchGenCol.n === 0) {
+      db.exec("ALTER TABLE worktrees ADD COLUMN branch_name_generated INTEGER NOT NULL DEFAULT 0")
+    }
 
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_worktrees_project ON worktrees(project_id)

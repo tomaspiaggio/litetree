@@ -10,6 +10,7 @@ const INSTRUCTION_LINES = [
   'A "treemux" MCP server is available. Use it to keep the treemux sidebar in sync with your work:',
   "- After you open or create a pull request, call report_pr with its number.",
   "- If you rename this worktree's git branch, call report_branch with the new name.",
+  "- Call get_context early. If branchNameIsGenerated is true, the branch still has a throwaway name: once the task is clear, rename the git branch to something short and descriptive (follow the repo's existing branch-naming convention) and call report_branch with the new name.",
   "- When you finish your task, or are blocked and need a decision, call needs_attention with a one-line summary. The user may be looking at a different worktree, so this is how you get their attention.",
   "- Use notify for noteworthy progress updates (sparingly).",
   "- Call set_status to reflect your state: working, waiting, done, or error.",

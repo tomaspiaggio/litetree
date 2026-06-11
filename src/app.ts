@@ -394,6 +394,7 @@ async function bootstrap(
       prNumber: prNum,
       hasPR: prNum !== null,
       baseBranch: "origin/main",
+      branchNameIsGenerated: wt.branchNameGenerated,
       defaultCommand: project?.defaultCommand ?? "claude",
       prInstructions: project?.prInstructions,
     }
@@ -633,7 +634,7 @@ async function bootstrap(
 
     let newId: string | null = null
     await Effect.runPromise(
-      worktreeSvc.create({ projectId, branchName: branch })
+      worktreeSvc.create({ projectId, branchName: branch, branchNameGenerated: true })
         .pipe(
           Effect.tap((entry: WorktreeEntry) => Effect.sync(() => { newId = entry.id })),
           Effect.catchAll(() => Effect.void),

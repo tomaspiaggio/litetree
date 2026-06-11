@@ -23,6 +23,7 @@ export class WorktreeService extends Context.Tag("WorktreeService")<
       displayName?: string
       baseBranch?: string
       command?: string
+      branchNameGenerated?: boolean
     }) => Effect.Effect<
       WorktreeEntry,
       | WorktreeCreateError
@@ -113,6 +114,7 @@ export const WorktreeServiceLive = Layer.effect(
             branchName: params.branchName,
             path: wtPath,
             displayName: params.displayName ?? params.branchName,
+            branchNameGenerated: params.branchNameGenerated ?? false,
             status: "active",
             createdAt: now,
             updatedAt: now,
@@ -214,6 +216,8 @@ export const WorktreeServiceLive = Layer.effect(
           const updated = new WorktreeEntry({
             ...wt,
             displayName,
+            // The user gave it a real name; stop nudging agents to rename.
+            branchNameGenerated: false,
             updatedAt: new Date().toISOString(),
           })
           yield* config.update((c) => ({
@@ -241,6 +245,8 @@ export const WorktreeServiceLive = Layer.effect(
             ...wt,
             branchName,
             displayName: wt.displayName === wt.branchName ? branchName : wt.displayName,
+            // The branch now has a real name.
+            branchNameGenerated: false,
             updatedAt: new Date().toISOString(),
           })
           yield* config.update((c) => ({

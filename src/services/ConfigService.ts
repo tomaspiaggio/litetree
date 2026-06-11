@@ -35,6 +35,7 @@ interface WorktreeRow {
   description: string
   status: string
   sort_order: number | null
+  branch_name_generated: number
   created_at: string
   updated_at: string
 }
@@ -60,6 +61,7 @@ const rowToWorktree = (row: WorktreeRow): WorktreeEntry =>
     description: row.description,
     status: row.status as "active" | "merged" | "archived",
     sortOrder: row.sort_order ?? undefined,
+    branchNameGenerated: row.branch_name_generated === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   })
@@ -102,8 +104,8 @@ export const ConfigServiceLive = Layer.effect(
         }
 
         const insertWorktree = db.prepare(`
-          INSERT INTO worktrees (id, project_id, branch_name, path, display_name, description, status, sort_order, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO worktrees (id, project_id, branch_name, path, display_name, description, status, sort_order, branch_name_generated, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         for (const w of config.worktrees) {
           insertWorktree.run(
@@ -115,6 +117,7 @@ export const ConfigServiceLive = Layer.effect(
             w.description,
             w.status,
             w.sortOrder ?? null,
+            w.branchNameGenerated ? 1 : 0,
             w.createdAt,
             w.updatedAt
           )
