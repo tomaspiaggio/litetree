@@ -21,6 +21,7 @@ interface ProjectRow {
   setup_script: string
   default_command: string
   custom_command: string | null
+  pr_instructions: string | null
   created_at: string
   updated_at: string
 }
@@ -46,6 +47,7 @@ const rowToProject = (row: ProjectRow): Project =>
     setupScript: JSON.parse(row.setup_script) as string[],
     defaultCommand: row.default_command as "claude" | "codex" | "opencode" | "custom",
     customCommand: row.custom_command ?? undefined,
+    prInstructions: row.pr_instructions ?? undefined,
   })
 
 const rowToWorktree = (row: WorktreeRow): WorktreeEntry =>
@@ -84,8 +86,8 @@ export const ConfigServiceLive = Layer.effect(
         db.exec("DELETE FROM projects")
 
         const insertProject = db.prepare(`
-          INSERT INTO projects (id, name, repo_path, setup_script, default_command, custom_command)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO projects (id, name, repo_path, setup_script, default_command, custom_command, pr_instructions)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
         `)
         for (const p of config.projects) {
           insertProject.run(
@@ -94,7 +96,8 @@ export const ConfigServiceLive = Layer.effect(
             p.repoPath,
             JSON.stringify(p.setupScript),
             p.defaultCommand,
-            p.customCommand ?? null
+            p.customCommand ?? null,
+            p.prInstructions ?? null
           )
         }
 

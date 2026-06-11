@@ -395,6 +395,7 @@ async function bootstrap(
       hasPR: prNum !== null,
       baseBranch: "origin/main",
       defaultCommand: project?.defaultCommand ?? "claude",
+      prInstructions: project?.prInstructions,
     }
   }
 
@@ -1344,6 +1345,15 @@ async function bootstrap(
       // otherwise just move focus to the visible sidebar.
       if (sidebarHidden) toggleSidebar()
       focus = "sidebar"
+      return
+    }
+    if (str === "\x0b") {
+      // Ctrl+K: inject the treemux `create_pr` MCP prompt as a slash command.
+      // treemux can't make the agent act via MCP (the server can't start a
+      // turn), so we type the command into the PTY exactly as the user would.
+      // The prompt body — incl. any per-project conventions — lives server-side.
+      const h = activeHandle()
+      if (h) h.write("/mcp__treemux__create_pr\r")
       return
     }
     if (str === "\x0f") { handleEditorPicker(); return }
