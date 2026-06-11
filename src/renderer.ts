@@ -89,6 +89,7 @@ export interface FrameOpts {
   attention: ReadonlyMap<string, { summary: string; at: number }>
   agentStatus: ReadonlyMap<string, AgentStatus>
   setupRunning: ReadonlySet<string>
+  cloning: ReadonlySet<string>
   toast: string | null
   sidebarHidden: boolean
   viewMode: "active" | "archived"
@@ -109,7 +110,7 @@ const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
 const spinner = (): string => SPINNER_FRAMES[Math.floor(Date.now() / 80) % SPINNER_FRAMES.length]!
 
 export function paintFrame(opts: FrameOpts): string {
-  const { worktrees, projects, selectedIndex, activeWorktreeId, focus, modal, handle, availableEditors, cols, rows, scrollOffset, inlineEdit, prNumbers, reportedPr, attention, agentStatus, setupRunning, toast, sidebarHidden, viewMode, archivedCount, memoryByWorktree, memoryTotal } = opts
+  const { worktrees, projects, selectedIndex, activeWorktreeId, focus, modal, handle, availableEditors, cols, rows, scrollOffset, inlineEdit, prNumbers, reportedPr, attention, agentStatus, setupRunning, cloning, toast, sidebarHidden, viewMode, archivedCount, memoryByWorktree, memoryTotal } = opts
   const contentHeight = rows - 2
   const termStartCol = sidebarHidden ? 1 : SIDEBAR_WIDTH + 2
   const termCols = sidebarHidden ? cols : cols - SIDEBAR_WIDTH - 1
@@ -117,7 +118,7 @@ export function paintFrame(opts: FrameOpts): string {
   let out = HIDE_CURSOR
 
   if (!sidebarHidden) {
-    out += paintSidebar(worktrees, projects, selectedIndex, activeWorktreeId, contentHeight, focus === "sidebar", inlineEdit, prNumbers, reportedPr, attention, agentStatus, setupRunning, viewMode, archivedCount, memoryByWorktree)
+    out += paintSidebar(worktrees, projects, selectedIndex, activeWorktreeId, contentHeight, focus === "sidebar", inlineEdit, prNumbers, reportedPr, attention, agentStatus, setupRunning, cloning, viewMode, archivedCount, memoryByWorktree)
     for (let r = 1; r <= contentHeight; r++) {
       out += moveTo(r, SIDEBAR_WIDTH + 1) + BORDER_FG + "│" + SGR_RESET
     }
@@ -179,6 +180,7 @@ function paintSidebar(
   attention: ReadonlyMap<string, { summary: string; at: number }>,
   agentStatus: ReadonlyMap<string, AgentStatus>,
   setupRunning: ReadonlySet<string>,
+  cloning: ReadonlySet<string>,
   viewMode: "active" | "archived",
   archivedCount: number,
   memoryByWorktree: ReadonlyMap<string, number>,
@@ -218,16 +220,19 @@ function paintSidebar(
       const pr = reportedPr.get(wt.id)
       const isMerged = wt.status === "merged" || pr?.state === "merged"
       const isSetupRunning = setupRunning.has(wt.id)
+      const isCloning = cloning.has(wt.id)
       const needsAttention = attention.has(wt.id)
       const status = agentStatus.get(wt.id)
       const editing = inlineEdit?.worktreeId === wt.id
 
       const numLabel = i < 9 ? `${i + 1}` : " "
-      // Marker precedence: setup spinner > needs-attention > active > merged >
-      // agent status > idle. Agent-reported PR wins over the gh-poll fallback.
+      // Marker precedence: cloning spinner > setup spinner > needs-attention >
+      // active > merged > agent status > idle. Agent-reported PR wins over the
+      // gh-poll fallback.
       let marker: string
       let markerColor: string
-      if (isSetupRunning) { marker = spinChar; markerColor = SIDEBAR_FG }
+      if (isCloning) { marker = spinChar; markerColor = ACCENT }
+      else if (isSetupRunning) { marker = spinChar; markerColor = SIDEBAR_FG }
       else if (needsAttention) { marker = "●"; markerColor = ATTENTION_FG }
       else if (isActive) { marker = "●"; markerColor = ACTIVE_FG }
       else if (isMerged) { marker = "✓"; markerColor = DIM_FG }
