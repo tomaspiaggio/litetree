@@ -19,7 +19,8 @@ import {
 import { generateBranchName } from "./utils/names.js"
 import { detectEditors, openEditor, type EditorOption } from "./utils/editors.js"
 import { sampleMemory } from "./utils/memory.js"
-import type { Project, WorktreeEntry, CommandType } from "./models/Config.js"
+import type { Project, CommandType } from "./models/Config.js"
+import { WorktreeEntry } from "./models/Config.js"
 import {
   paintFrame,
   ALT_SCREEN_ON,
@@ -182,6 +183,11 @@ async function bootstrap(
   // Setup script status per worktree. "running" while scripts execute,
   // dropped from the map when finished.
   const setupRunning = new Set<string>()
+  // Worktrees whose git fetch + worktree add is still in flight. These are
+  // optimistic placeholders shown in the sidebar with a "cloning" spinner so a
+  // slow fetch on a big repo (lots of images/videos) gives immediate feedback.
+  const cloning = new Set<string>()
+  let cloningWorktrees: WorktreeEntry[] = []
   // RSS per worktree (bytes), sampled from `ps` every couple of seconds.
   let memoryByWorktree: Map<string, number> = new Map()
   let memoryTotal = 0
@@ -237,7 +243,10 @@ async function bootstrap(
     const prevSelectedId = worktrees[selectedIndex]?.id
     if (viewMode === "active") {
       activeWorktrees = sortByAwake(activeWorktrees)
-      worktrees = activeWorktrees
+      // In-flight clone placeholders sit on top until the real entry lands.
+      worktrees = cloningWorktrees.length > 0
+        ? [...cloningWorktrees, ...activeWorktrees]
+        : activeWorktrees
     } else {
       worktrees = archivedWorktrees
     }
@@ -574,8 +583,8 @@ async function bootstrap(
     if (!running) return
     const h = activeHandle()
     if (h && h.dirtyLines.size > 0) dirty = true
-    // Keep painting while any setup script is running so its spinner animates.
-    if (setupRunning.size > 0) dirty = true
+    // Keep painting while any setup script or clone is running so its spinner animates.
+    if (setupRunning.size > 0 || cloning.size > 0) dirty = true
     if (!dirty) return
     dirty = false
 
@@ -599,6 +608,7 @@ async function bootstrap(
       attention,
       agentStatus,
       setupRunning,
+      cloning,
       toast: toastMessage && Date.now() < toastUntil ? toastMessage : null,
       sidebarHidden,
       viewMode,
@@ -631,15 +641,43 @@ async function bootstrap(
     const project = projects.find(p => p.id === projectId)
     if (!project) return
 
+    // Optimistic "cloning" placeholder: a slow git fetch on a big repo (lots of
+    // images/videos) would otherwise show nothing until the worktree exists.
+    const now = new Date().toISOString()
+    const placeholder = new WorktreeEntry({
+      id: `cloning-${branch}`,
+      projectId,
+      branchName: branch,
+      path: "",
+      displayName: "cloning…",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    })
+    cloningWorktrees = [placeholder, ...cloningWorktrees]
+    cloning.add(placeholder.id)
+    applyView()
+    if (viewMode === "active") selectedIndex = 0
+    markDirty()
+
     let newId: string | null = null
-    await Effect.runPromise(
-      worktreeSvc.create({ projectId, branchName: branch })
-        .pipe(
-          Effect.tap((entry: WorktreeEntry) => Effect.sync(() => { newId = entry.id })),
-          Effect.catchAll(() => Effect.void),
-        )
-    )
-    if (!newId) return
+    try {
+      await Effect.runPromise(
+        worktreeSvc.create({ projectId, branchName: branch })
+          .pipe(
+            Effect.tap((entry: WorktreeEntry) => Effect.sync(() => { newId = entry.id })),
+            Effect.catchAll(() => Effect.void),
+          )
+      )
+    } finally {
+      cloningWorktrees = cloningWorktrees.filter(w => w.id !== placeholder.id)
+      cloning.delete(placeholder.id)
+    }
+    if (!newId) {
+      applyView()
+      markDirty()
+      return
+    }
 
     await refresh()
     selectedIndex = worktrees.findIndex(w => w.id === newId)
@@ -1138,6 +1176,8 @@ async function bootstrap(
   // Centralized "open this worktree" — focuses terminal, hides sidebar,
   // resizes the PTY to the new (wider) viewport.
   const openWorktree = async (wtId: string) => {
+    // Still-cloning placeholders have no real path/worktree yet — ignore.
+    if (cloning.has(wtId)) return
     activeWorktreeId = wtId
     setSetting(SETTING_LAST_ACTIVE, wtId)
     // Opening a worktree marks it read: clear any agent attention/notification.
