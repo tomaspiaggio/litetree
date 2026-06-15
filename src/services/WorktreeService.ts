@@ -201,7 +201,11 @@ export const WorktreeServiceLive = Layer.effect(
           const worktrees = projectId
             ? cfg.worktrees.filter((w) => w.projectId === projectId)
             : cfg.worktrees
-          return worktrees.filter((w) => w.status === "archived")
+          // Sort by archive time (updatedAt is stamped when archived) descending,
+          // so the most recently deleted worktrees appear first.
+          return worktrees
+            .filter((w) => w.status === "archived")
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
         }),
 
       rename: (worktreeId, displayName) =>

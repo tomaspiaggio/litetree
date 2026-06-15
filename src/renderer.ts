@@ -208,9 +208,20 @@ function paintSidebar(
   // After all worktrees, one row for "[+ New]".
   const spinChar = spinner()
 
-  for (let r = listStart; r <= height; r++) {
+  // The bottom row is reserved for the status/legend label (see below); keep the
+  // list from drawing under it so the last worktree isn't clipped.
+  const hasBottomLabel = (viewMode === "active" && archivedCount > 0) || viewMode === "archived"
+  const lastListRow = hasBottomLabel ? height - 1 : height
+  // Scroll the list so the selected worktree stays visible. Each worktree spans
+  // two rows, so only `visibleCount` of them fit. Derive the window start purely
+  // from selectedIndex (paint is stateless): pin the selection to the bottom
+  // edge once it scrolls past the fold, top edge otherwise.
+  const visibleCount = Math.max(1, Math.floor((lastListRow - listStart + 1) / 2))
+  const startIdx = selectedIndex >= visibleCount ? selectedIndex - visibleCount + 1 : 0
+
+  for (let r = listStart; r <= lastListRow; r++) {
     const offset = r - listStart
-    const i = Math.floor(offset / 2)
+    const i = Math.floor(offset / 2) + startIdx
     const isPrimary = offset % 2 === 0
 
     if (i < worktrees.length) {
