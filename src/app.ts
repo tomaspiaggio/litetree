@@ -900,6 +900,25 @@ async function bootstrap(
     modal = { type: "editor-picker", worktreeId: wt.id, selectedIndex: 0 }
   }
 
+  const prNumberFor = (wtId: string): number | null =>
+    reportedPr.get(wtId)?.number ?? prNumbers.get(wtId) ?? null
+
+  // Open the active worktree's GitHub PR in the browser (Ctrl+P). No-op when
+  // there's no PR — the hotkey is only advertised in that case anyway.
+  // `gh pr view --web` is GitHub-only and works for open/merged/closed PRs.
+  const openActivePR = () => {
+    if (!activeWorktreeId) return
+    const wt = findWorktree(activeWorktreeId)
+    if (!wt || prNumberFor(activeWorktreeId) === null) return
+    try {
+      Bun.spawn(["gh", "pr", "view", wt.branchName, "--web"], {
+        cwd: wt.path,
+        stdout: "ignore",
+        stderr: "ignore",
+      })
+    } catch { /* ignore */ }
+  }
+
   // --- Settings ---
 
   const GLOBAL_DEFAULT_COMMAND = "global_default_command"
@@ -1398,6 +1417,13 @@ async function bootstrap(
       return
     }
     if (str === "\x0f") { handleEditorPicker(); return }
+    // Ctrl+P: open the PR in the browser — but only swallow it when a PR
+    // actually exists, otherwise forward it to the embedded app (shell/agent
+    // history). This mirrors the conditional hotkey shown in the status bar.
+    if (str === "\x10" && activeWorktreeId && prNumberFor(activeWorktreeId) !== null) {
+      openActivePR()
+      return
+    }
     // Shift+Up / Shift+Down = scroll terminal panel
     if (str === "\x1b[1;2A") { setScrollOffset(currentScrollOffset() + 1); return }
     if (str === "\x1b[1;2B") { setScrollOffset(currentScrollOffset() - 1); return }
