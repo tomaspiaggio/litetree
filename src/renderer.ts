@@ -134,7 +134,10 @@ export function paintFrame(opts: FrameOpts): string {
   const selWt = worktrees[selectedIndex]
   const selProj = selWt ? projects.find(p => p.id === selWt.projectId) : undefined
   out += paintDetailBar(selWt, selProj, rows - 1, cols, scrollOffset, toast, selWt ? memoryByWorktree.get(selWt.id) ?? 0 : 0)
-  out += paintStatusBar(focus, rows, cols, viewMode, sidebarHidden ? memoryTotal : 0)
+  const activePr = activeWorktreeId
+    ? reportedPr.get(activeWorktreeId)?.number ?? prNumbers.get(activeWorktreeId) ?? null
+    : null
+  out += paintStatusBar(focus, rows, cols, viewMode, sidebarHidden ? memoryTotal : 0, activePr !== null)
 
   if (modal.type !== "none") {
     out += paintModal(modal, availableEditors, cols, rows)
@@ -516,7 +519,7 @@ function paintDetailBar(wt: WorktreeEntry | undefined, project: Project | undefi
   return out
 }
 
-function paintStatusBar(focus: string, row: number, cols: number, viewMode: "active" | "archived", memoryTotal: number): string {
+function paintStatusBar(focus: string, row: number, cols: number, viewMode: "active" | "archived", memoryTotal: number, hasPr: boolean): string {
   let out = moveTo(row, 1) + BAR_BG + BAR_FG + " "
 
   if (focus === "sidebar" && viewMode === "archived") {
@@ -528,6 +531,7 @@ function paintStatusBar(focus: string, row: number, cols: number, viewMode: "act
     out += shortcut("z", "sleep") + shortcut("a", "archived") + shortcut("s/S", "settings") + shortcut("q", "quit")
   } else if (focus === "terminal") {
     out += shortcut("Ctrl+B", "sidebar / fullscreen") + shortcut("F1-F9", "jump") + shortcut("Ctrl+O", "editor") + shortcut("Ctrl+K", "create PR")
+    if (hasPr) out += shortcut("Ctrl+P", "open PR")
   }
 
   out += CLEAR_RIGHT + SGR_RESET
