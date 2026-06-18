@@ -173,8 +173,11 @@ async function bootstrap(
   // MCP-driven per-worktree state (agent reports these via the treemux MCP
   // server). All persisted in app_settings so they survive a restart.
   const reportedPr = new Map<string, ReportedPr>()      // authoritative PR, wins over gh poll
-  const attention = new Map<string, { summary: string; at: number }>() // unread / needs-you
+  const attention = new Map<string, { summary: string; at: number }>() // unread / needs-you — drives the sidebar orb
   const notifications = new Map<string, { message: string; level: string; at: number }>()
+  // Raw agent status, persisted across restarts. Only "error" is rendered (a
+  // red worktree name in the sidebar); the other states are kept for restart/
+  // future use. The "come here" nudge is the separate attention orb above.
   const agentStatus = new Map<string, AgentStatus>()
   const mcpPrKey = (id: string) => `mcp_pr_${id}`
   const mcpAttentionKey = (id: string) => `mcp_attention_${id}`

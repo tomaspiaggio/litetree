@@ -49,10 +49,12 @@ const BAR_FG = `${CSI}38;5;252m`
 const ACCENT = `${CSI}38;5;81m`
 const MODAL_BG = `${CSI}48;5;237m`
 const MODAL_BORDER_FG = `${CSI}38;5;213m`
-// Agent-reported state markers (see McpService): attention = bright amber,
-// done = green, error = red.
+// Two worktree signals, distinguished by color, not by symbol:
+//   ATTENTION_FG (amber) — the agent is calling you (needs_attention/notify):
+//     bold name + an orb. An unread nudge; clears when you open the worktree.
+//   STATUS_ERROR_FG (red) — the agent reported a problem (set_status "error"):
+//     red name, no orb. A persistent state; stays red until the agent recovers.
 const ATTENTION_FG = `${CSI}38;5;220m`
-const STATUS_DONE_FG = `${CSI}38;5;113m`
 const STATUS_ERROR_FG = `${CSI}38;5;203m`
 
 export const SIDEBAR_WIDTH = 30
@@ -235,25 +237,27 @@ function paintSidebar(
       const isMerged = wt.status === "merged" || pr?.state === "merged"
       const isSetupRunning = setupRunning.has(wt.id)
       const isCloning = cloning.has(wt.id)
-      const needsAttention = attention.has(wt.id)
-      const status = agentStatus.get(wt.id)
+      // Persistent problem state — the agent reported set_status "error". Shown
+      // as a red name (no orb), and it takes precedence over the attention orb:
+      // a broken worktree reads as a problem, not a "come here" nudge.
+      const hasError = agentStatus.get(wt.id) === "error"
+      // "Come here" nudge: the agent flagged this worktree via needs_attention/
+      // notify and you haven't opened it since (opening clears it — see
+      // openWorktree). Suppressed for the active worktree (you're already there)
+      // and for errored worktrees (red wins).
+      const needsAttention = attention.has(wt.id) && !isActive && !hasError
       const editing = inlineEdit?.worktreeId === wt.id
 
       const numLabel = i < 9 ? `${i + 1}` : " "
-      // Marker precedence: cloning spinner > setup spinner > needs-attention >
-      // active > merged > agent status > idle. Agent-reported PR wins over the
-      // gh-poll fallback.
+      // Marker: a transient spinner while cloning/setup runs, the attention orb
+      // when the agent needs you, otherwise nothing. No per-status ticks — the
+      // orb is the only symbol, so "no orb" reliably means "no nudge". Problems
+      // are signalled by the red name color below, not a marker.
       let marker: string
       let markerColor: string
       if (isCloning) { marker = spinChar; markerColor = ACCENT }
       else if (isSetupRunning) { marker = spinChar; markerColor = SIDEBAR_FG }
       else if (needsAttention) { marker = "●"; markerColor = ATTENTION_FG }
-      else if (isActive) { marker = "●"; markerColor = ACTIVE_FG }
-      else if (isMerged) { marker = "✓"; markerColor = DIM_FG }
-      else if (status === "done") { marker = "✓"; markerColor = STATUS_DONE_FG }
-      else if (status === "error") { marker = "✗"; markerColor = STATUS_ERROR_FG }
-      else if (status === "waiting") { marker = "●"; markerColor = ACCENT }
-      else if (status === "working") { marker = "●"; markerColor = DIM_FG }
       else { marker = " "; markerColor = SIDEBAR_FG }
       const project = projects.find(p => p.id === wt.projectId)
       const prNum = pr?.number ?? prNumbers.get(wt.id)
@@ -278,9 +282,9 @@ function paintSidebar(
           out += moveTo(r, 1) + SIDEBAR_BG + DIM_FG + SGR_DIM + prefix + name + prSuffix + " ".repeat(pad) + SGR_RESET
         } else {
           out += moveTo(r, 1) + SIDEBAR_BG + DIM_FG + ` ${numLabel} ` + SGR_RESET
-          const nameColor = needsAttention ? ATTENTION_FG : isActive ? ACTIVE_FG : SIDEBAR_FG
+          const nameColor = hasError ? STATUS_ERROR_FG : needsAttention ? ATTENTION_FG : isActive ? ACTIVE_FG : SIDEBAR_FG
           out += SIDEBAR_BG + (needsAttention ? SGR_BOLD : "") + markerColor + marker + SGR_RESET
-          out += SIDEBAR_BG + nameColor + ` ` + name + SGR_RESET
+          out += SIDEBAR_BG + (needsAttention ? SGR_BOLD : "") + nameColor + ` ` + name + SGR_RESET
           if (prSuffix) out += SIDEBAR_BG + ACCENT + prSuffix + SGR_RESET
           out += SIDEBAR_BG + " ".repeat(pad) + SGR_RESET
         }
