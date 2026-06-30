@@ -57,8 +57,8 @@ function buildCreatePrPrompt(ctx: WorktreeContext | null): string {
     )
   } else {
     lines.push(
-      `Create a pull request for this worktree's branch, targeting \`${base}\`.`,
-      `Push the branch first if it isn't pushed yet, then open the PR with \`gh pr create\`.`,
+      `Create a draft pull request for this worktree's branch, targeting \`${base}\`.`,
+      `Push the branch first if it isn't pushed yet, then open the PR with \`gh pr create --draft\`.`,
     )
   }
 
