@@ -88,6 +88,30 @@ export const WorktreeServiceLive = Layer.effect(
     const config = yield* ConfigService
     const git = yield* GitService
 
+    // A soft-deleted project (see ProjectService.remove) lingers only to keep
+    // its still-open worktrees alive. Once the last active worktree of such a
+    // project is archived or removed, there's nothing left to keep working — so
+    // free any remaining (archived) worktrees from disk and purge the project
+    // record along with all its worktree rows. No-op for live projects.
+    const purgeOrphanedProject = (projectId: string) =>
+      Effect.gen(function* () {
+        const cfg = yield* config.load
+        const project = cfg.projects.find((p) => p.id === projectId)
+        if (!project || !project.deletedAt) return
+        const worktrees = cfg.worktrees.filter((w) => w.projectId === projectId)
+        if (worktrees.some((w) => w.status !== "archived")) return
+        for (const wt of worktrees) {
+          yield* git.removeWorktree(project.repoPath, wt.path).pipe(
+            Effect.catchAll(() => Effect.void)
+          )
+        }
+        yield* config.update((c) => ({
+          ...c,
+          projects: c.projects.filter((p) => p.id !== projectId),
+          worktrees: c.worktrees.filter((w) => w.projectId !== projectId),
+        }) as typeof c)
+      })
+
     return {
       create: (params) =>
         Effect.gen(function* () {
@@ -154,6 +178,7 @@ export const WorktreeServiceLive = Layer.effect(
             ...c,
             worktrees: c.worktrees.filter((w) => w.id !== worktreeId),
           }) as typeof c)
+          yield* purgeOrphanedProject(wt.projectId)
         }),
 
       archive: (worktreeId) =>
@@ -175,6 +200,7 @@ export const WorktreeServiceLive = Layer.effect(
             ...c,
             worktrees: c.worktrees.map((w) => (w.id === worktreeId ? updated : w)),
           }) as typeof c)
+          yield* purgeOrphanedProject(wt.projectId)
           return updated
         }),
 

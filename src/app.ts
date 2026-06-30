@@ -788,7 +788,10 @@ async function bootstrap(
   const NEW_PROJECT_OPTION = "+ New project…"
 
   const openProjectPicker = (selectedIndex = 0) => {
-    if (projects.length === 0) {
+    // Soft-deleted projects (those kept alive only for their still-open
+    // worktrees) are hidden from the picker.
+    const visible = projects.filter(p => !p.deletedAt)
+    if (visible.length === 0) {
       startOnboarding()
       return
     }
@@ -796,9 +799,9 @@ async function bootstrap(
     modal = {
       type: "select",
       title: "Select project (or add new)",
-      options: [...projects.map(p => p.name), NEW_PROJECT_OPTION],
-      selectedIndex: Math.min(selectedIndex, projects.length),
-      deletableCount: projects.length,
+      options: [...visible.map(p => p.name), NEW_PROJECT_OPTION],
+      selectedIndex: Math.min(selectedIndex, visible.length),
+      deletableCount: visible.length,
       onSelect: (name) => {
         modal = { type: "none" }
         focus = "sidebar"
@@ -806,23 +809,25 @@ async function bootstrap(
           startOnboarding()
           return
         }
-        const project = projects.find(p => p.name === name)
+        const project = visible.find(p => p.name === name)
         if (project) createWorktree(project.id)
       },
       onDelete: (idx) => {
-        const project = projects[idx]
+        const project = visible[idx]
         if (!project) return
         const activeCount = activeWorktrees.filter(w => w.projectId === project.id).length
         const archivedCount = archivedWorktrees.filter(w => w.projectId === project.id).length
-        const orphanSuffix =
-          activeCount + archivedCount === 0
-            ? ""
-            : ` (${activeCount} active, ${archivedCount} archived worktrees will be orphaned)`
+        // Archived worktrees get their disk freed; open ones keep running and
+        // the project is hidden (soft-deleted) until they all close.
+        const parts: string[] = []
+        if (archivedCount > 0) parts.push(`${archivedCount} archived worktree${archivedCount === 1 ? "" : "s"} will be deleted`)
+        if (activeCount > 0) parts.push(`${activeCount} open worktree${activeCount === 1 ? "" : "s"} will keep running`)
+        const suffix = parts.length > 0 ? ` (${parts.join("; ")})` : ""
         focus = "modal"
         modal = {
           type: "confirm",
           title: "Delete project",
-          message: `Delete project "${project.name}"?${orphanSuffix} (y/n)`,
+          message: `Delete project "${project.name}"?${suffix} (y/n)`,
           onConfirm: async () => {
             modal = { type: "none" }
             try {
@@ -830,10 +835,11 @@ async function bootstrap(
               await refresh()
               showToast(`Deleted project ${project.name}`)
               markDirty()
-              if (projects.length === 0) {
+              const remaining = projects.filter(p => !p.deletedAt).length
+              if (remaining === 0) {
                 focus = "sidebar"
               } else {
-                openProjectPicker(Math.min(idx, projects.length - 1))
+                openProjectPicker(Math.min(idx, remaining - 1))
               }
             } catch (e) {
               modal = {

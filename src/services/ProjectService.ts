@@ -7,6 +7,7 @@ import {
   ProjectNotFoundError,
 } from "../models/Errors.js"
 import { ConfigService } from "./ConfigService.js"
+import { GitService } from "./GitService.js"
 
 export class ProjectService extends Context.Tag("ProjectService")<
   ProjectService,
@@ -42,6 +43,7 @@ export const ProjectServiceLive = Layer.effect(
   ProjectService,
   Effect.gen(function* () {
     const config = yield* ConfigService
+    const git = yield* GitService
 
     return {
       add: (params) =>
@@ -85,16 +87,51 @@ export const ProjectServiceLive = Layer.effect(
           return updated
         }),
 
+      // Deleting a project frees the disk used by its archived worktrees but
+      // never touches its still-open (active) worktrees — those may have a live
+      // agent and uncommitted work. If any active worktrees remain, the project
+      // is soft-deleted (record kept, hidden from the picker) so they keep
+      // working; WorktreeService purges the record once the last one closes. If
+      // none remain, the project is removed outright.
       remove: (projectId) =>
         Effect.gen(function* () {
           const cfg = yield* config.load
-          if (!cfg.projects.some((p) => p.id === projectId)) {
+          const project = cfg.projects.find((p) => p.id === projectId)
+          if (!project) {
             return yield* new ProjectNotFoundError({ projectId })
           }
+          const worktrees = cfg.worktrees.filter((w) => w.projectId === projectId)
+          const archived = worktrees.filter((w) => w.status === "archived")
+          const hasActive = worktrees.some((w) => w.status !== "archived")
+
+          // Free disk for every archived worktree. Best-effort, mirroring
+          // WorktreeService.remove — git worktree commands can hang or fail and
+          // shouldn't block the deletion.
+          for (const wt of archived) {
+            yield* git.removeWorktree(project.repoPath, wt.path).pipe(
+              Effect.catchAll(() => Effect.void)
+            )
+          }
+
+          if (!hasActive) {
+            // Nothing open depends on this project — remove it outright.
+            yield* config.update((c) => ({
+              ...c,
+              projects: c.projects.filter((p) => p.id !== projectId),
+              worktrees: c.worktrees.filter((w) => w.projectId !== projectId),
+            }) as typeof c)
+            return
+          }
+
+          // Keep the project record (soft-deleted) so its open worktrees keep
+          // working; drop only the archived worktree records we just cleaned up.
+          const deleted = new Project({ ...project, deletedAt: new Date().toISOString() })
           yield* config.update((c) => ({
             ...c,
-            projects: c.projects.filter((p) => p.id !== projectId),
-            worktrees: c.worktrees.filter((w) => w.projectId !== projectId),
+            projects: c.projects.map((p) => (p.id === projectId ? deleted : p)),
+            worktrees: c.worktrees.filter(
+              (w) => w.projectId !== projectId || w.status !== "archived"
+            ),
           }) as typeof c)
         }),
 

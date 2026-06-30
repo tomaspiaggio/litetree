@@ -16,6 +16,11 @@ export class Project extends Schema.Class<Project>("Project")({
   // Project-specific PR conventions, surfaced to the agent via the treemux
   // `create_pr` MCP prompt (the Ctrl+K "create a PR" hotkey). Free-form text.
   prInstructions: Schema.optional(Schema.String),
+  // ISO timestamp set when the project is soft-deleted. A soft-deleted project
+  // is hidden from the picker but its record is retained so its still-open
+  // (active) worktrees keep working. It's purged automatically once it has no
+  // active worktrees left. Undefined for live projects.
+  deletedAt: Schema.optional(Schema.String),
 }) {}
 
 export class WorktreeEntry extends Schema.Class<WorktreeEntry>("WorktreeEntry")({
