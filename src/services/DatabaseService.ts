@@ -1,10 +1,15 @@
 import { Context, Effect, Layer } from "effect"
 import { Database } from "bun:sqlite"
 import { mkdir } from "node:fs/promises"
+import { dirname } from "node:path"
 import { paths } from "../utils/paths.js"
 import { ConfigWriteError } from "../models/Errors.js"
 
-const DB_PATH = paths.root + "/treemux.db"
+const DEFAULT_DB_PATH = paths.root + "/treemux.db"
+
+// Tests (and other tooling) can point treemux at a throwaway database by
+// setting TREEMUX_DB_PATH. Unset in normal use, so behaviour is unchanged.
+const dbPath = () => process.env.TREEMUX_DB_PATH || DEFAULT_DB_PATH
 
 export class DatabaseService extends Context.Tag("DatabaseService")<
   DatabaseService,
@@ -16,16 +21,20 @@ export class DatabaseService extends Context.Tag("DatabaseService")<
 export const DatabaseServiceLive = Layer.scoped(
   DatabaseService,
   Effect.gen(function* () {
-    yield* Effect.tryPromise({
-      try: () => mkdir(paths.root, { recursive: true }),
-      catch: (e) =>
-        new ConfigWriteError({
-          message: `Failed to create data dir: ${e}`,
-          path: paths.root,
-        }),
-    })
+    const path = dbPath()
+    if (path !== ":memory:") {
+      const dir = dirname(path)
+      yield* Effect.tryPromise({
+        try: () => mkdir(dir, { recursive: true }),
+        catch: (e) =>
+          new ConfigWriteError({
+            message: `Failed to create data dir: ${e}`,
+            path: dir,
+          }),
+      })
+    }
 
-    const db = new Database(DB_PATH)
+    const db = new Database(path)
     db.exec("PRAGMA journal_mode = WAL")
     db.exec("PRAGMA foreign_keys = ON")
     db.exec("PRAGMA busy_timeout = 3000")
