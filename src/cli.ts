@@ -1,12 +1,13 @@
 import { Effect, Layer } from "effect"
 import { DatabaseServiceLive } from "./services/DatabaseService.js"
 import { ConfigServiceLive } from "./services/ConfigService.js"
+import { GitServiceLive } from "./services/GitService.js"
 import { ProjectServiceLive } from "./services/ProjectService.js"
 import { ProjectService } from "./services/ProjectService.js"
 import type { CommandType } from "./models/Config.js"
 
 const ConfigLayer = ConfigServiceLive.pipe(Layer.provide(DatabaseServiceLive))
-const BaseLayer = Layer.merge(ConfigLayer, DatabaseServiceLive)
+const BaseLayer = Layer.mergeAll(ConfigLayer, DatabaseServiceLive, GitServiceLive)
 const FullLayer = ProjectServiceLive.pipe(Layer.provide(BaseLayer), Layer.merge(BaseLayer))
 
 export async function handleCli(args: string[]): Promise<boolean> {

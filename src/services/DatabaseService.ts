@@ -48,6 +48,7 @@ export const DatabaseServiceLive = Layer.scoped(
         default_command TEXT NOT NULL DEFAULT 'claude',
         custom_command TEXT,
         pr_instructions TEXT,
+        deleted_at TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       )
@@ -59,6 +60,14 @@ export const DatabaseServiceLive = Layer.scoped(
       .get() as { n: number } | null
     if (hasPrCol && hasPrCol.n === 0) {
       db.exec("ALTER TABLE projects ADD COLUMN pr_instructions TEXT")
+    }
+
+    // Migration: add deleted_at to projects tables that predate soft-deletion.
+    const hasDeletedAtCol = db
+      .query("SELECT COUNT(*) as n FROM pragma_table_info('projects') WHERE name = 'deleted_at'")
+      .get() as { n: number } | null
+    if (hasDeletedAtCol && hasDeletedAtCol.n === 0) {
+      db.exec("ALTER TABLE projects ADD COLUMN deleted_at TEXT")
     }
 
     db.exec(`
