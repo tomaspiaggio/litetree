@@ -71,6 +71,11 @@ export class WorktreeService extends Context.Tag("WorktreeService")<
     readonly list: (
       projectId?: string
     ) => Effect.Effect<readonly WorktreeEntry[], ConfigReadError>
+    // Persist the sidebar order. `orderedIds` is the desired top-to-bottom
+    // order of active worktrees; each id's position becomes its sort_order.
+    readonly reorder: (
+      orderedIds: readonly string[]
+    ) => Effect.Effect<void, ConfigWriteError>
     readonly checkMerged: (
       worktreeId: string
     ) => Effect.Effect<boolean, GitError | ConfigReadError>
@@ -274,6 +279,8 @@ export const WorktreeServiceLive = Layer.effect(
             : cfg.worktrees
           return worktrees.filter((w) => w.status !== "archived")
         }),
+
+      reorder: (orderedIds) => config.saveOrder(orderedIds),
 
       checkMerged: (worktreeId) =>
         Effect.gen(function* () {

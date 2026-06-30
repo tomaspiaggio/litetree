@@ -11,6 +11,12 @@ export class ConfigService extends Context.Tag("ConfigService")<
     readonly update: (
       fn: (config: TreemuxConfig) => TreemuxConfig
     ) => Effect.Effect<TreemuxConfig, ConfigReadError | ConfigWriteError>
+    // Persist just the sidebar ordering of worktrees (cheap UPDATEs, no full
+    // rewrite). `orderedIds` is the desired top-to-bottom order; each id's
+    // position becomes its sort_order. Ids not present are left untouched.
+    readonly saveOrder: (
+      orderedIds: readonly string[]
+    ) => Effect.Effect<void, ConfigWriteError>
   }
 >() {}
 
@@ -73,8 +79,13 @@ export const ConfigServiceLive = Layer.effect(
 
     const loadConfig = (): TreemuxConfig => {
       const projects = db.query("SELECT * FROM projects ORDER BY name").all() as ProjectRow[]
+      // Honour the persisted sidebar order (sort_order). Worktrees that don't
+      // have one yet (freshly created, or pre-dating this feature) sort to the
+      // top in newest-first order, matching the old created_at DESC behaviour.
       const worktrees = db
-        .query("SELECT * FROM worktrees ORDER BY created_at DESC")
+        .query(
+          "SELECT * FROM worktrees ORDER BY (sort_order IS NULL) DESC, sort_order ASC, created_at DESC"
+        )
         .all() as WorktreeRow[]
       return new TreemuxConfig({
         projects: projects.map(rowToProject),
@@ -126,6 +137,14 @@ export const ConfigServiceLive = Layer.effect(
       tx()
     }
 
+    const saveOrder = (orderedIds: readonly string[]) => {
+      const tx = db.transaction(() => {
+        const upd = db.prepare("UPDATE worktrees SET sort_order = ? WHERE id = ?")
+        orderedIds.forEach((id, i) => upd.run(i, id))
+      })
+      tx()
+    }
+
     return {
       load: Effect.try({
         try: () => loadConfig(),
@@ -157,6 +176,16 @@ export const ConfigServiceLive = Layer.effect(
           catch: (e) =>
             new ConfigReadError({
               message: `Failed to update config in DB: ${e}`,
+              path: "treemux.db",
+            }),
+        }),
+
+      saveOrder: (orderedIds: readonly string[]) =>
+        Effect.try({
+          try: () => saveOrder(orderedIds),
+          catch: (e) =>
+            new ConfigWriteError({
+              message: `Failed to save worktree order to DB: ${e}`,
               path: "treemux.db",
             }),
         }),
