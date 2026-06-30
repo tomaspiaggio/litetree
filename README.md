@@ -38,6 +38,26 @@ bun run dev project list
 bun run dev project remove <id>
 ```
 
+### Install as a command (`tt` / `treemux`)
+
+To run treemux from anywhere instead of `bun run dev`, compile a standalone binary and drop it on your `PATH`.
+
+For a user-local install (no `sudo`, into `~/.local/bin`):
+
+```bash
+bun run build:local
+```
+
+This compiles the binary and installs it as both `tt` and `treemux` in `~/.local/bin`, alongside a `native/` folder holding node-pty's prebuilt addons (the binary looks for them next to itself at runtime). Make sure `~/.local/bin` is on your `PATH`:
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+```
+
+Then just run `tt` (or `treemux`). Re-run `bun run build:local` to pick up new changes.
+
+Alternatively, `bun run build` symlinks `tt` into `/usr/local/bin` (may need `sudo` depending on your setup).
+
 ## Keyboard
 
 ### Sidebar (active view)
