@@ -241,11 +241,23 @@ async function bootstrap(
       .sort((a, b) => (isAwake(b.w) ? 1 : 0) - (isAwake(a.w) ? 1 : 0) || a.i - b.i)
       .map(x => x.w)
 
+  // Persist the current active order so the sidebar looks the same after a
+  // restart (the awake-float snapshot is saved, not recomputed from scratch).
+  // Fire-and-forget: ordering is cosmetic, never block the UI on it.
+  const persistOrder = () => {
+    Effect.runPromise(
+      worktreeSvc
+        .reorder(activeWorktrees.map(w => w.id))
+        .pipe(Effect.catchAll(() => Effect.void)),
+    )
+  }
+
   const applyView = () => {
     // Keep the highlighted worktree highlighted across a re-sort.
     const prevSelectedId = worktrees[selectedIndex]?.id
     if (viewMode === "active") {
       activeWorktrees = sortByAwake(activeWorktrees)
+      persistOrder()
       // In-flight clone placeholders sit on top until the real entry lands.
       worktrees = cloningWorktrees.length > 0
         ? [...cloningWorktrees, ...activeWorktrees]

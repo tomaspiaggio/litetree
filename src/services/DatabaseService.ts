@@ -76,6 +76,14 @@ export const DatabaseServiceLive = Layer.scoped(
       db.exec("ALTER TABLE worktrees ADD COLUMN branch_name_generated INTEGER NOT NULL DEFAULT 0")
     }
 
+    // Migration: add sort_order to worktrees tables that predate persisted ordering.
+    const hasSortOrderCol = db
+      .query("SELECT COUNT(*) as n FROM pragma_table_info('worktrees') WHERE name = 'sort_order'")
+      .get() as { n: number } | null
+    if (hasSortOrderCol && hasSortOrderCol.n === 0) {
+      db.exec("ALTER TABLE worktrees ADD COLUMN sort_order INTEGER")
+    }
+
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_worktrees_project ON worktrees(project_id)
     `)
