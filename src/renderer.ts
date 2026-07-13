@@ -97,6 +97,7 @@ export interface FrameOpts {
   viewMode: "active" | "archived"
   archivedCount: number
   memoryByWorktree: ReadonlyMap<string, number>
+  memorySubprocByWorktree: ReadonlyMap<string, number>
   memoryTotal: number
 }
 
@@ -112,7 +113,7 @@ const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
 const spinner = (): string => SPINNER_FRAMES[Math.floor(Date.now() / 80) % SPINNER_FRAMES.length]!
 
 export function paintFrame(opts: FrameOpts): string {
-  const { worktrees, projects, selectedIndex, activeWorktreeId, focus, modal, handle, availableEditors, cols, rows, scrollOffset, inlineEdit, prNumbers, reportedPr, attention, agentStatus, setupRunning, cloning, toast, sidebarHidden, viewMode, archivedCount, memoryByWorktree, memoryTotal } = opts
+  const { worktrees, projects, selectedIndex, activeWorktreeId, focus, modal, handle, availableEditors, cols, rows, scrollOffset, inlineEdit, prNumbers, reportedPr, attention, agentStatus, setupRunning, cloning, toast, sidebarHidden, viewMode, archivedCount, memoryByWorktree, memorySubprocByWorktree, memoryTotal } = opts
   const contentHeight = rows - 2
   const termStartCol = sidebarHidden ? 1 : SIDEBAR_WIDTH + 2
   const termCols = sidebarHidden ? cols : cols - SIDEBAR_WIDTH - 1
@@ -135,7 +136,7 @@ export function paintFrame(opts: FrameOpts): string {
 
   const selWt = worktrees[selectedIndex]
   const selProj = selWt ? projects.find(p => p.id === selWt.projectId) : undefined
-  out += paintDetailBar(selWt, selProj, rows - 1, cols, scrollOffset, toast, selWt ? memoryByWorktree.get(selWt.id) ?? 0 : 0)
+  out += paintDetailBar(selWt, selProj, rows - 1, cols, scrollOffset, toast, selWt ? memoryByWorktree.get(selWt.id) ?? 0 : 0, selWt ? memorySubprocByWorktree.get(selWt.id) ?? 0 : 0)
   const activePr = activeWorktreeId
     ? reportedPr.get(activeWorktreeId)?.number ?? prNumbers.get(activeWorktreeId) ?? null
     : null
@@ -493,7 +494,7 @@ function relTime(iso: string): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
-function paintDetailBar(wt: WorktreeEntry | undefined, project: Project | undefined, row: number, cols: number, scrollOffset: number, toast: string | null, memBytes: number): string {
+function paintDetailBar(wt: WorktreeEntry | undefined, project: Project | undefined, row: number, cols: number, scrollOffset: number, toast: string | null, memBytes: number, subprocBytes: number): string {
   let out = moveTo(row, 1) + BAR_BG
 
   if (toast) {
@@ -514,7 +515,15 @@ function paintDetailBar(wt: WorktreeEntry | undefined, project: Project | undefi
     c += `  │  ${wt.status}`
     c += `  │  ${relTime(wt.updatedAt)}`
     if (project) c += `  │  ${project.name}`
-    if (memBytes > 0) c += `  │  mem ${formatMem(memBytes)}`
+    if (memBytes > 0) {
+      // Left number is the agent process alone; subprocesses are shown as an
+      // additive term so it's clear they're NOT folded into the left figure.
+      if (subprocBytes >= 1024 * 1024) {
+        c += `  │  mem ${formatMem(memBytes - subprocBytes)} + ${formatMem(subprocBytes)} subproc`
+      } else {
+        c += `  │  mem ${formatMem(memBytes)}`
+      }
+    }
     if (scrollOffset > 0) c += `  │  SCROLL -${scrollOffset}`
     out += c.length < cols ? c + " ".repeat(cols - c.length) : c.slice(0, cols)
   }
