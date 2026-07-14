@@ -193,6 +193,7 @@ async function bootstrap(
   let cloningWorktrees: WorktreeEntry[] = []
   // RSS per worktree (bytes), sampled from `ps` every couple of seconds.
   let memoryByWorktree: Map<string, number> = new Map()
+  let memorySubprocByWorktree: Map<string, number> = new Map()
   let memoryTotal = 0
 
   const showErrorModal = (title: string, message: string) => {
@@ -630,6 +631,7 @@ async function bootstrap(
       viewMode,
       archivedCount: archivedWorktrees.length,
       memoryByWorktree,
+      memorySubprocByWorktree,
       memoryTotal,
     })
     process.stdout.write(frame)
@@ -1699,7 +1701,8 @@ async function bootstrap(
   setInterval(() => { fetchAllPRs() }, 30 * 1000)
 
   // Memory sampling. One `ps` call per tick aggregates RSS over each PTY's
-  // process tree (PTY + child shell + Claude/codex + any spawned helpers).
+  // whole session (agent + any spawned helpers, incl. ones reparented away),
+  // and splits out the subprocess portion. See utils/memory.ts.
   const sampleAndStoreMemory = async () => {
     const pidByWt = new Map<string, number>()
     for (const id of ptySvc.listActive()) {
@@ -1709,6 +1712,7 @@ async function bootstrap(
     if (pidByWt.size === 0) {
       if (memoryTotal !== 0) {
         memoryByWorktree = new Map()
+        memorySubprocByWorktree = new Map()
         memoryTotal = 0
         markDirty()
       }
@@ -1717,6 +1721,7 @@ async function bootstrap(
     try {
       const sample = await sampleMemory(pidByWt)
       memoryByWorktree = sample.perWorktree
+      memorySubprocByWorktree = sample.subprocByWorktree
       memoryTotal = sample.total
       markDirty()
     } catch { /* ignore */ }
