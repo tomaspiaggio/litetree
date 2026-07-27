@@ -18,7 +18,7 @@ import {
 } from "./mcp/install.js"
 import { generateBranchName } from "./utils/names.js"
 import { detectEditors, openEditor, type EditorOption } from "./utils/editors.js"
-import { sampleMemory } from "./utils/memory.js"
+import { processStartedAt, sampleMemory, type ClosedSession, type WorktreeRoots } from "./utils/memory.js"
 import type { Project, CommandType } from "./models/Config.js"
 import { WorktreeEntry } from "./models/Config.js"
 import {
@@ -191,10 +191,23 @@ async function bootstrap(
   // slow fetch on a big repo (lots of images/videos) gives immediate feedback.
   const cloning = new Set<string>()
   let cloningWorktrees: WorktreeEntry[] = []
-  // RSS per worktree (bytes), sampled from `ps` every couple of seconds.
+  // Memory per worktree (bytes), sampled every couple of seconds.
   let memoryByWorktree: Map<string, number> = new Map()
   let memorySubprocByWorktree: Map<string, number> = new Map()
+  let memorySelf = 0
   let memoryTotal = 0
+  // Every PTY session we've ever started, per worktree. Sessions stay in here
+  // after their leader is killed: closing a terminal doesn't stop the dev
+  // servers and watchers it left behind (they get reparented to launchd but
+  // keep the sid), and those still cost the user memory. See utils/memory.ts.
+  const ptySessions = new Map<string, ClosedSession[]>()
+  const rememberPtySession = (worktreeId: string, pid: number) => {
+    const seen = ptySessions.get(worktreeId) ?? []
+    if (!seen.some((s) => s.sid === pid)) {
+      seen.push({ sid: pid, startedAt: processStartedAt(pid) })
+      ptySessions.set(worktreeId, seen)
+    }
+  }
 
   const showErrorModal = (title: string, message: string) => {
     focus = "modal"
@@ -565,6 +578,7 @@ async function bootstrap(
       })
     )
     acquireLock(worktreeId, handle.pid)
+    rememberPtySession(worktreeId, handle.pid)
     setSetting(sessionStartedKey(worktreeId), "1")
   }
 
@@ -632,6 +646,7 @@ async function bootstrap(
       archivedCount: archivedWorktrees.length,
       memoryByWorktree,
       memorySubprocByWorktree,
+      memorySelf,
       memoryTotal,
     })
     process.stdout.write(frame)
@@ -1700,28 +1715,40 @@ async function bootstrap(
   // without needing a manual refresh.
   setInterval(() => { fetchAllPRs() }, 30 * 1000)
 
-  // Memory sampling. One `ps` call per tick aggregates RSS over each PTY's
-  // whole session (agent + any spawned helpers, incl. ones reparented away),
-  // and splits out the subprocess portion. See utils/memory.ts.
+  // Memory sampling. One `ps` call per tick aggregates each PTY's whole
+  // session (agent + any spawned helpers, incl. ones reparented away and ones
+  // outliving the terminal that started them), splits out the subprocess
+  // portion, and adds treemux's own usage. See utils/memory.ts.
   const sampleAndStoreMemory = async () => {
-    const pidByWt = new Map<string, number>()
+    const live = new Map<string, number>()
     for (const id of ptySvc.listActive()) {
       const h = ptySvc.get(id)
-      if (h) pidByWt.set(id, h.pid)
+      if (h) live.set(id, h.pid)
     }
-    if (pidByWt.size === 0) {
+    const roots = new Map<string, WorktreeRoots>()
+    for (const [id, closed] of ptySessions) {
+      roots.set(id, { livePid: live.get(id) ?? null, closed })
+    }
+    for (const [id, pid] of live) {
+      if (!roots.has(id)) roots.set(id, { livePid: pid, closed: [] })
+    }
+    // Nothing has ever been spawned — the readout isn't on screen anyway, so
+    // don't pay for a `ps` every couple of seconds.
+    if (roots.size === 0) {
       if (memoryTotal !== 0) {
         memoryByWorktree = new Map()
         memorySubprocByWorktree = new Map()
+        memorySelf = 0
         memoryTotal = 0
         markDirty()
       }
       return
     }
     try {
-      const sample = await sampleMemory(pidByWt)
+      const sample = await sampleMemory(roots)
       memoryByWorktree = sample.perWorktree
       memorySubprocByWorktree = sample.subprocByWorktree
+      memorySelf = sample.selfBytes
       memoryTotal = sample.total
       markDirty()
     } catch { /* ignore */ }

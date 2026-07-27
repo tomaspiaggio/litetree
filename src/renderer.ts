@@ -98,6 +98,7 @@ export interface FrameOpts {
   archivedCount: number
   memoryByWorktree: ReadonlyMap<string, number>
   memorySubprocByWorktree: ReadonlyMap<string, number>
+  memorySelf: number
   memoryTotal: number
 }
 
@@ -113,7 +114,7 @@ const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
 const spinner = (): string => SPINNER_FRAMES[Math.floor(Date.now() / 80) % SPINNER_FRAMES.length]!
 
 export function paintFrame(opts: FrameOpts): string {
-  const { worktrees, projects, selectedIndex, activeWorktreeId, focus, modal, handle, availableEditors, cols, rows, scrollOffset, inlineEdit, prNumbers, reportedPr, attention, agentStatus, setupRunning, cloning, toast, sidebarHidden, viewMode, archivedCount, memoryByWorktree, memorySubprocByWorktree, memoryTotal } = opts
+  const { worktrees, projects, selectedIndex, activeWorktreeId, focus, modal, handle, availableEditors, cols, rows, scrollOffset, inlineEdit, prNumbers, reportedPr, attention, agentStatus, setupRunning, cloning, toast, sidebarHidden, viewMode, archivedCount, memoryByWorktree, memorySubprocByWorktree, memorySelf, memoryTotal } = opts
   const contentHeight = rows - 2
   const termStartCol = sidebarHidden ? 1 : SIDEBAR_WIDTH + 2
   const termCols = sidebarHidden ? cols : cols - SIDEBAR_WIDTH - 1
@@ -140,7 +141,7 @@ export function paintFrame(opts: FrameOpts): string {
   const activePr = activeWorktreeId
     ? reportedPr.get(activeWorktreeId)?.number ?? prNumbers.get(activeWorktreeId) ?? null
     : null
-  out += paintStatusBar(focus, rows, cols, viewMode, sidebarHidden ? memoryTotal : 0, activePr !== null)
+  out += paintStatusBar(focus, rows, cols, viewMode, sidebarHidden ? memoryTotal : 0, sidebarHidden ? memorySelf : 0, activePr !== null)
 
   if (modal.type !== "none") {
     out += paintModal(modal, availableEditors, cols, rows)
@@ -532,7 +533,7 @@ function paintDetailBar(wt: WorktreeEntry | undefined, project: Project | undefi
   return out
 }
 
-function paintStatusBar(focus: string, row: number, cols: number, viewMode: "active" | "archived", memoryTotal: number, hasPr: boolean): string {
+function paintStatusBar(focus: string, row: number, cols: number, viewMode: "active" | "archived", memoryTotal: number, memorySelf: number, hasPr: boolean): string {
   let out = moveTo(row, 1) + BAR_BG + BAR_FG + " "
 
   if (focus === "sidebar" && viewMode === "archived") {
@@ -550,8 +551,11 @@ function paintStatusBar(focus: string, row: number, cols: number, viewMode: "act
   out += CLEAR_RIGHT + SGR_RESET
 
   // Right-aligned total memory readout when sidebar is hidden (terminal focus).
+  // The total covers every worktree session plus treemux itself; the tui's own
+  // share is called out separately so a leak in it is attributable.
   if (memoryTotal > 0) {
-    const memStr = `total mem ${formatMem(memoryTotal)} `
+    const self = memorySelf >= 1024 * 1024 ? ` (tui ${formatMem(memorySelf)})` : ""
+    const memStr = `total mem ${formatMem(memoryTotal)}${self} `
     const col = Math.max(1, cols - memStr.length + 1)
     out += moveTo(row, col) + BAR_BG + ACCENT + SGR_BOLD + memStr + SGR_RESET
   }
