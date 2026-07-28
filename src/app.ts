@@ -175,9 +175,10 @@ async function bootstrap(
   const reportedPr = new Map<string, ReportedPr>()      // authoritative PR, wins over gh poll
   const attention = new Map<string, { summary: string; at: number }>() // unread / needs-you — drives the sidebar orb
   const notifications = new Map<string, { message: string; level: string; at: number }>()
-  // Raw agent status, persisted across restarts. Only "error" is rendered (a
-  // red worktree name in the sidebar); the other states are kept for restart/
-  // future use. The "come here" nudge is the separate attention orb above.
+  // Raw agent status, persisted across restarts. Two states are rendered:
+  // "error" (red worktree name) and "done" (the whole row goes dark gray —
+  // "ready to archive, safe to delete"). "working"/"waiting" render as normal.
+  // The "come here" nudge is the separate attention orb above.
   const agentStatus = new Map<string, AgentStatus>()
   const mcpPrKey = (id: string) => `mcp_pr_${id}`
   const mcpAttentionKey = (id: string) => `mcp_attention_${id}`
@@ -417,6 +418,19 @@ async function bootstrap(
         break
       }
     }
+  }
+
+  // Safety net for the "ready to archive" gray. It's the one status whose
+  // staleness is dangerous — it tells the user a worktree is safe to delete —
+  // so we don't rely solely on the agent remembering to set "working" again.
+  // Handing the worktree new work provably makes it non-archivable, so clear
+  // the gray the moment the user submits into a "done" worktree; the agent's
+  // own set_status call then takes over as usual.
+  const clearDoneOnUserInput = (wtId: string) => {
+    if (agentStatus.get(wtId) !== "done") return
+    agentStatus.set(wtId, "working")
+    setSetting(mcpStatusKey(wtId), "working")
+    markDirty()
   }
 
   const provideContext = (worktreeId: string): WorktreeContext | null => {
@@ -1544,6 +1558,10 @@ async function bootstrap(
     if (currentScrollOffset() > 0 && str.length === 1 && str >= " ") {
       setScrollOffset(0)
     }
+    // Submitting into an archivable worktree un-archives it. Keyed on Enter
+    // rather than any keystroke so that scrolling or Ctrl-C'ing around in a
+    // finished worktree doesn't spuriously light it back up.
+    if (activeWorktreeId && (str === "\r" || str === "\n")) clearDoneOnUserInput(activeWorktreeId)
     const h = activeHandle()
     if (h) h.write(str)
   }
