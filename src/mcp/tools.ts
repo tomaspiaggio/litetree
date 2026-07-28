@@ -157,7 +157,13 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     {
       title: "Set agent status",
       description:
-        "Reflect your current state so treemux can color this worktree: working (busy), waiting (need input), done (finished), error (failed).",
+        "Reflect your current state so treemux can color this worktree. Call this on every transition, not just once. " +
+        "working = actively doing something. " +
+        "waiting = your turn ended and you need the user (this is the normal end of a turn — the work continues later). " +
+        "error = you failed or are stuck; the worktree name turns red until you recover. " +
+        'done = READY TO ARCHIVE: the entire body of work for this worktree is finished AND landed — every PR you opened is merged (or closed for good) and there is nothing left to do. The worktree goes dark gray, meaning "safe to delete". ' +
+        'Do NOT use done just because a task or a turn finished — that is "waiting". Do not use it while a PR is still open; verify the merge first (e.g. `gh pr view <n> --json state`). ' +
+        'If you set done and the user then asks for more work, immediately set working again so the worktree stops reading as archivable.',
       inputSchema: { status: z.enum(["working", "waiting", "done", "error"]) },
     },
     async ({ status }) => {

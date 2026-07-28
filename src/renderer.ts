@@ -49,11 +49,14 @@ const BAR_FG = `${CSI}38;5;252m`
 const ACCENT = `${CSI}38;5;81m`
 const MODAL_BG = `${CSI}48;5;237m`
 const MODAL_BORDER_FG = `${CSI}38;5;213m`
-// Two worktree signals, distinguished by color, not by symbol:
+// Three worktree signals, distinguished by color, not by symbol:
 //   ATTENTION_FG (amber) — the agent is calling you (needs_attention/notify):
 //     bold name + an orb. An unread nudge; clears when you open the worktree.
 //   STATUS_ERROR_FG (red) — the agent reported a problem (set_status "error"):
 //     red name, no orb. A persistent state; stays red until the agent recovers.
+//   DIM_FG + SGR_DIM (dark gray) — ready to archive (set_status "done"): the
+//     whole row recedes, including the PR number. Not a nudge and not a
+//     problem — the opposite, a "you can stop thinking about this one" signal.
 const ATTENTION_FG = `${CSI}38;5;220m`
 const STATUS_ERROR_FG = `${CSI}38;5;203m`
 
@@ -236,7 +239,6 @@ function paintSidebar(
       const isSelected = i === selectedIndex
       const isActive = wt.id === activeId
       const pr = reportedPr.get(wt.id)
-      const isMerged = wt.status === "merged" || pr?.state === "merged"
       const isSetupRunning = setupRunning.has(wt.id)
       const isCloning = cloning.has(wt.id)
       // Persistent problem state — the agent reported set_status "error". Shown
@@ -248,6 +250,13 @@ function paintSidebar(
       // openWorktree). Suppressed for the active worktree (you're already there)
       // and for errored worktrees (red wins).
       const needsAttention = attention.has(wt.id) && !isActive && !hasError
+      // "Ready to archive": the agent reported set_status "done", which means
+      // the whole body of work has landed — PRs merged, nothing left to do —
+      // not merely "this turn is over" (that's "waiting"). Renders as a dark
+      // gray row so a glance down the sidebar shows what's safe to delete.
+      // An unread nudge outranks it: amber first so you don't miss the "come
+      // look" call, then gray once you've opened the worktree and cleared it.
+      const isDone = agentStatus.get(wt.id) === "done" && !needsAttention
       const editing = inlineEdit?.worktreeId === wt.id
 
       const numLabel = i < 9 ? `${i + 1}` : " "
@@ -280,7 +289,7 @@ function paintSidebar(
           out += moveTo(r, 1) + SELECTED_BG + SELECTED_FG + SGR_BOLD + prefix + name + SGR_RESET
           if (prSuffix) out += SELECTED_BG + ACCENT + SGR_BOLD + prSuffix + SGR_RESET
           out += SELECTED_BG + " ".repeat(pad) + SGR_RESET
-        } else if (isMerged) {
+        } else if (isDone) {
           out += moveTo(r, 1) + SIDEBAR_BG + DIM_FG + SGR_DIM + prefix + name + prSuffix + " ".repeat(pad) + SGR_RESET
         } else {
           out += moveTo(r, 1) + SIDEBAR_BG + DIM_FG + ` ${numLabel} ` + SGR_RESET
