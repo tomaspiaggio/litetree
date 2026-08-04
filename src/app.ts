@@ -683,6 +683,27 @@ async function bootstrap(
     process.exit(0)
   }
 
+  // Ctrl+C is muscle memory for "interrupt the agent", so quitting on it was
+  // costing people their whole session. Gate it behind a confirm that defaults
+  // to No; Esc/n/Enter all back out.
+  const confirmQuit = () => {
+    const prevFocus = focus
+    focus = "modal"
+    modal = {
+      type: "confirm",
+      title: "Quit treemux",
+      message: "Quit treemux? Running agents will be killed (they resume on next open).",
+      choice: "no",
+      onConfirm: quit,
+      onCancel: () => {
+        modal = { type: "none" }
+        focus = prevFocus
+        markDirty()
+      },
+    }
+    markDirty()
+  }
+
   const createWorktree = async (projectId: string) => {
     const branch = generateBranchName()
     const project = projects.find(p => p.id === projectId)
@@ -1183,7 +1204,12 @@ async function bootstrap(
       if (str.length === 0) return
     }
 
-    if (str === "\x03") { quit(); return }
+    // A second Ctrl+C must NOT confirm — hammering Ctrl+C is exactly the habit
+    // this guard exists to survive. Ignore it while any modal/edit is up.
+    if (str === "\x03") {
+      if (modal.type === "none" && !inlineEdit) confirmQuit()
+      return
+    }
 
     // F1..F9: jump directly to that worktree from any focus.
     if (FKEY_TO_NUM[str] !== undefined) {
@@ -1568,6 +1594,7 @@ async function bootstrap(
 
   const onModalInput = (str: string) => {
     if (str === "\x1b") {
+      if (modal.type === "confirm" && modal.onCancel) { modal.onCancel(); return }
       modal = { type: "none" }
       focus = activeHandle() ? "terminal" : "sidebar"
       return
@@ -1650,10 +1677,26 @@ async function bootstrap(
         }
         break
 
-      case "confirm":
-        if (str === "y" || str === "Y") modal.onConfirm()
-        else if (str === "n" || str === "N") { modal = { type: "none" }; focus = "sidebar" }
+      case "confirm": {
+        const cancel = modal.onCancel
+        const dismiss = () => {
+          if (cancel) cancel()
+          else { modal = { type: "none" }; focus = "sidebar" }
+        }
+        if (modal.choice) {
+          if (str === "\x1b[C" || str === "\x1b[D" || str === "\t" || str === "h" || str === "l") {
+            modal = { ...modal, choice: modal.choice === "yes" ? "no" : "yes" }
+          } else if (str === "\r") {
+            if (modal.choice === "yes") modal.onConfirm()
+            else dismiss()
+          } else if (str === "y" || str === "Y") modal.onConfirm()
+          else if (str === "n" || str === "N") dismiss()
+        } else {
+          if (str === "y" || str === "Y") modal.onConfirm()
+          else if (str === "n" || str === "N") dismiss()
+        }
         break
+      }
 
       case "editor-picker":
         if (str === "\r") {

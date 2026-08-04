@@ -67,7 +67,9 @@ export type ModalState =
   | { type: "input"; title: string; placeholder: string; value: string; onSubmit: (v: string) => void }
   | { type: "textarea"; title: string; placeholder: string; value: string; onSubmit: (v: string) => void }
   | { type: "select"; title: string; options: string[]; selectedIndex: number; onSelect: (v: string) => void; onDelete?: (idx: number) => void; deletableCount?: number }
-  | { type: "confirm"; title: string; message: string; onConfirm: () => void }
+  // `choice` opts into a Yes/No button row (arrow-selectable, Enter activates)
+  // instead of the bare y/n prompt — use it when the default should be "don't".
+  | { type: "confirm"; title: string; message: string; onConfirm: () => void; onCancel?: () => void; choice?: "yes" | "no" }
   | { type: "error"; title: string; message: string }
   | { type: "editor-picker"; worktreeId: string; selectedIndex: number }
 
@@ -661,11 +663,22 @@ function paintModal(modal: ModalState, editors: EditorOption[], screenCols: numb
         lines.push(DIM_FG + "Enter select · d delete · Esc cancel" + SGR_RESET + MODAL_BG)
       }
       break
-    case "confirm":
+    case "confirm": {
       title = modal.title
       // Wrap to fit the modal's inner content width (mw minus borders + padding).
       lines = wrapText(modal.message, mw - 4)
+      if (modal.choice) {
+        const btn = (label: string, active: boolean) =>
+          active
+            ? SELECTED_BG + SELECTED_FG + SGR_BOLD + ` ${label} ` + SGR_RESET + MODAL_BG
+            : DIM_FG + ` ${label} ` + SGR_RESET + MODAL_BG
+        lines.push("")
+        lines.push(btn("Yes", modal.choice === "yes") + "   " + btn("No", modal.choice === "no"))
+        lines.push("")
+        lines.push(DIM_FG + "←/→ choose · Enter confirm · Esc cancel" + SGR_RESET + MODAL_BG)
+      }
       break
+    }
     case "error":
       title = modal.title
       lines = []
