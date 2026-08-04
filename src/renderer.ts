@@ -89,7 +89,6 @@ export interface FrameOpts {
   availableEditors: EditorOption[]
   cols: number
   rows: number
-  scrollOffset: number
   inlineEdit: InlineEdit | null
   prNumbers: ReadonlyMap<string, number | null>
   reportedPr: ReadonlyMap<string, ReportedPr>
@@ -119,8 +118,12 @@ const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
 const spinner = (): string => SPINNER_FRAMES[Math.floor(Date.now() / 80) % SPINNER_FRAMES.length]!
 
 export function paintFrame(opts: FrameOpts): string {
-  const { worktrees, projects, selectedIndex, activeWorktreeId, focus, modal, handle, availableEditors, cols, rows, scrollOffset, inlineEdit, prNumbers, reportedPr, attention, agentStatus, setupRunning, cloning, toast, sidebarHidden, viewMode, archivedCount, memoryByWorktree, memorySubprocByWorktree, memorySelf, memoryTotal } = opts
+  const { worktrees, projects, selectedIndex, activeWorktreeId, focus, modal, handle, availableEditors, cols, rows, inlineEdit, prNumbers, reportedPr, attention, agentStatus, setupRunning, cloning, toast, sidebarHidden, viewMode, archivedCount, memoryByWorktree, memorySubprocByWorktree, memorySelf, memoryTotal } = opts
   const contentHeight = rows - 2
+  // Scroll position lives in the xterm buffer (`viewportY`), not in treemux —
+  // see paintTerminal. This is purely the derived "how far above the live
+  // tail are we" number for the indicator and the cursor gate.
+  const scrollOffset = handle ? scrollOffsetOf(handle) : 0
   const termStartCol = sidebarHidden ? 1 : SIDEBAR_WIDTH + 2
   const termCols = sidebarHidden ? cols : cols - SIDEBAR_WIDTH - 1
 
@@ -134,7 +137,7 @@ export function paintFrame(opts: FrameOpts): string {
   }
 
   if (handle) {
-    out += paintTerminal(handle, termStartCol, 1, termCols, contentHeight, scrollOffset)
+    out += paintTerminal(handle, termStartCol, 1, termCols, contentHeight)
   } else {
     const wt = worktrees[selectedIndex]
     out += paintPlaceholder(wt, termStartCol, 1, termCols, contentHeight, projects.length === 0)
@@ -340,24 +343,35 @@ function paintSidebar(
   return out
 }
 
+/**
+ * How many lines the viewport currently sits above the live tail. Derived, not
+ * stored: `viewportY` is xterm's own anchored scroll position and `baseY` is
+ * the top of the bottom page, so their difference is the scrollback depth.
+ */
+export function scrollOffsetOf(handle: PtyHandle): number {
+  const buffer = handle.terminal.buffer.active
+  return Math.max(0, buffer.baseY - buffer.viewportY)
+}
+
 function paintTerminal(
   handle: PtyHandle,
   startCol: number,
   startRow: number,
   termCols: number,
   termRows: number,
-  scrollOffset: number,
 ): string {
   let out = ""
   const buffer = handle.terminal.buffer.active
   const termColMax = handle.terminal.cols
   const termRowMax = handle.terminal.rows
 
-  // Determine which buffer rows to render. xterm buffer indices go from
-  // 0 to (buffer.length - 1). The visible window normally starts at baseY
-  // and shows `rows` rows. When scrolled up, we shift back into scrollback.
-  const baseY = (buffer as any).baseY ?? 0
-  const startBufRow = Math.max(0, baseY - scrollOffset)
+  // Render from xterm's own viewport anchor. Do NOT recompute this as
+  // `baseY - offset`: baseY advances with every line the agent emits (and once
+  // the scrollback saturates, existing lines shift index instead), so a static
+  // offset walks the window downward through the buffer and yanks the screen
+  // out from under anyone reading scrollback. `viewportY` is the position
+  // xterm maintains across both regimes — it only moves when we scroll it.
+  const startBufRow = buffer.viewportY
 
 
   for (let row = 0; row < termRows; row++) {

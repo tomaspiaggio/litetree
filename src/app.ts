@@ -32,6 +32,7 @@ import {
   BPASTE_ON,
   BPASTE_OFF,
   SIDEBAR_WIDTH,
+  scrollOffsetOf,
   type ModalState,
 } from "./renderer.js"
 
@@ -161,7 +162,6 @@ async function bootstrap(
   // Wheel-as-arrows detector: see onTerminalInput for the rationale.
   let pendingArrow: { dir: "up" | "down"; str: string; timer: ReturnType<typeof setTimeout> } | null = null
   const WHEEL_WINDOW_MS = 150
-  const scrollOffsets = new Map<string, number>()
   // PR detection (via `gh pr list`). null = checked, no PR; undefined = not checked yet.
   const prNumbers = new Map<string, number | null>()
   const prFetchedAt = new Map<string, number>()
@@ -596,15 +596,23 @@ async function bootstrap(
     setSetting(sessionStartedKey(worktreeId), "1")
   }
 
-  const currentScrollOffset = () =>
-    activeWorktreeId ? scrollOffsets.get(activeWorktreeId) ?? 0 : 0
-
-  const setScrollOffset = (v: number) => {
-    if (!activeWorktreeId) return
+  // Scroll position is owned by the xterm buffer, not by treemux. Keeping our
+  // own offset meant it was measured from a moving baseY, so incoming agent
+  // output dragged the view downward while you were reading. xterm anchors its
+  // viewport across both new lines and scrollback eviction; we just drive it.
+  const currentScrollOffset = () => {
     const h = activeHandle()
-    const max = h ? Math.max(0, ((h.terminal.buffer.active as any).baseY ?? 0)) : 0
-    const clamped = Math.max(0, Math.min(max, v))
-    scrollOffsets.set(activeWorktreeId, clamped)
+    return h ? scrollOffsetOf(h) : 0
+  }
+
+  // Positive delta scrolls up (further into scrollback). xterm clamps to
+  // [0, baseY] and re-attaches to the live tail once we reach the bottom.
+  const scrollBy = (delta: number) => {
+    activeHandle()?.terminal.scrollLines(-delta)
+  }
+
+  const scrollToTail = () => {
+    activeHandle()?.terminal.scrollToBottom()
   }
 
   let mouseModeEnabled = false
@@ -646,7 +654,6 @@ async function bootstrap(
       availableEditors,
       cols: cols(),
       rows: rows(),
-      scrollOffset: currentScrollOffset(),
       inlineEdit,
       prNumbers,
       reportedPr,
@@ -1144,8 +1151,7 @@ async function bootstrap(
     // Wheel events: always handled locally to scroll the terminal panel
     if (button === 64 || button === 65) {
       if (activeHandle() && (sidebarHidden || x > SIDEBAR_WIDTH + 1)) {
-        const cur = currentScrollOffset()
-        setScrollOffset(button === 64 ? cur + 3 : cur - 3)
+        scrollBy(button === 64 ? 3 : -3)
         return "handled"
       }
       return "drop"
@@ -1503,11 +1509,11 @@ async function bootstrap(
       return
     }
     // Shift+Up / Shift+Down = scroll terminal panel
-    if (str === "\x1b[1;2A") { setScrollOffset(currentScrollOffset() + 1); return }
-    if (str === "\x1b[1;2B") { setScrollOffset(currentScrollOffset() - 1); return }
+    if (str === "\x1b[1;2A") { scrollBy(1); return }
+    if (str === "\x1b[1;2B") { scrollBy(-1); return }
     // Shift+PageUp / Shift+PageDown = scroll by page
-    if (str === "\x1b[5;2~") { setScrollOffset(currentScrollOffset() + termRows()); return }
-    if (str === "\x1b[6;2~") { setScrollOffset(currentScrollOffset() - termRows()); return }
+    if (str === "\x1b[5;2~") { scrollBy(termRows()); return }
+    if (str === "\x1b[6;2~") { scrollBy(-termRows()); return }
 
     // Wheel-as-arrows → treemux scroll. The host terminal (Ghostty, iTerm2,
     // etc.) in alt-screen with mouse reporting off translates mouse-wheel
@@ -1537,13 +1543,13 @@ async function bootstrap(
         clearTimeout(pendingArrow.timer)
         const pendingCount = pendingArrow.str.length / 3
         pendingArrow = null
-        setScrollOffset(currentScrollOffset() + (dir === "up" ? pendingCount + arrowCount : -(pendingCount + arrowCount)))
+        scrollBy(dir === "up" ? pendingCount + arrowCount : -(pendingCount + arrowCount))
         return
       }
 
       // Multi-arrow chunk in one read → unambiguously a wheel burst.
       if (arrowCount >= 2) {
-        setScrollOffset(currentScrollOffset() + (dir === "up" ? arrowCount : -arrowCount))
+        scrollBy(dir === "up" ? arrowCount : -arrowCount)
         return
       }
 
@@ -1582,7 +1588,7 @@ async function bootstrap(
 
     // Any other key resets scroll to follow-tail
     if (currentScrollOffset() > 0 && str.length === 1 && str >= " ") {
-      setScrollOffset(0)
+      scrollToTail()
     }
     // Submitting into an archivable worktree un-archives it. Keyed on Enter
     // rather than any keystroke so that scrolling or Ctrl-C'ing around in a
